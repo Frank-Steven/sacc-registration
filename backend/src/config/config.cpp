@@ -1,5 +1,6 @@
 #include "config/config.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <map>
 #include <sqlite3.h>
@@ -78,10 +79,11 @@ bool normalizeValue(int type, const nlohmann::json& raw, std::string& out_value,
         v = static_cast<std::int64_t>(raw.get<std::uint64_t>());
       } else if (raw.is_string()) {
         const std::string s = raw.get<std::string>();
+        errno = 0;
         const char* p = s.c_str();
         char* end = nullptr;
         const long long lv = std::strtoll(p, &end, 10);
-        if (end == p || *end != '\0') {
+        if (errno == ERANGE || end == p || *end != '\0') {  // 审查 Issue 7：溢出/非纯数字拒
           out_err = "数字值格式不正确";
           return false;
         }
@@ -131,10 +133,11 @@ const nlohmann::json* extraValidate(const std::string& key, const std::string& v
     return &err;
   }
   if (key == "max_upload_size") {
+    errno = 0;
     const char* p = value.c_str();
     char* end = nullptr;
     const long long v = std::strtoll(p, &end, 10);
-    if (end == p || *end != '\0') {
+    if (errno == ERANGE || end == p || *end != '\0') {  // 审查 Issue 7：溢出/非纯数字拒
       static const nlohmann::json err = cfg_err(kValidation, "max_upload_size 须为数字");
       return &err;
     }

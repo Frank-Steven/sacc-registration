@@ -135,7 +135,11 @@ export async function runReminders({ runtime, lookaheadSec = 3600, nowSec } = {}
   return { activities: activities.length, sent };
 }
 
-// 邮件队列：channel=1 且 send_status=0 的通知交 sendMail({ to, subject, text }) 发送
+// 邮件队列：channel=1 且 send_status=0 的通知交 sendMail({ to, subject, text }) 发送。
+// 重试上限：发送异常置 0 回队列并累加 attempt_count（0005 迁移新增列），
+// 达到 MAX_MAIL_ATTEMPTS 置 2（永久失败），避免对永久失效收件人无限重试（审查 Issue 4）。
+const MAX_MAIL_ATTEMPTS = 10;
+
 /**
  * @param {object} [opts]
  * @param {import('../wasm-runtime/runtime.js').WasmRuntime} [opts.runtime]
@@ -150,7 +154,7 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
   const q = await runtime.invoke({
     op: 'db.query',
     args: {
-      sql: 'SELECT n.notification_id, n.title, n.content, u.email FROM notification n ' +
+      sql: 'SELECT n.notification_id, n.title, n.content, n.attempt_count, u.email FROM notification n ' +
         "JOIN \"user\" u ON u.uid = n.uid WHERE n.channel = 1 AND n.send_status = 0 " +
         'ORDER BY n.notification_id LIMIT ?;',
       params: [limit],
@@ -161,32 +165,38 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
   let sent = 0;
   let failed = 0;
   for (const row of rows) {
+    const attempt = Number(row.attempt_count) || 0;
     if (!row.email) {
       // 无邮箱属永久失败（用户不会补邮箱就重试）：置 2 终止，不再进队列
-      await setMailStatus(runtime, row.notification_id, 2);
+      await markMailStatus(runtime, row.notification_id, 2, attempt);
       failed += 1;
       continue;
     }
     try {
       await sendMail({ to: row.email, subject: row.title, text: row.content });
-      await setMailStatus(runtime, row.notification_id, 1);  // 成功
+      await markMailStatus(runtime, row.notification_id, 1, attempt);  // 成功
       sent += 1;
     } catch (err) {
-      // 发送异常（SMTP 抖动等）：置 0 回队列，下次扫描自动重试
-      await setMailStatus(runtime, row.notification_id, 0);
+      // 发送异常（SMTP 抖动等）：置 0 回队列，下次扫描自动重试；达上限置 2 终止
+      const next = attempt + 1;
+      await markMailStatus(runtime, row.notification_id, next >= MAX_MAIL_ATTEMPTS ? 2 : 0, next);
       failed += 1;
-      logger.warn('mail send failed, will retry', { id: row.notification_id, err: err.message });
+      logger.warn('mail send failed, will retry', {
+        id: row.notification_id, attempt: next,
+        err: err.message,
+      });
     }
   }
   return { sent, failed, pending: rows.length - sent - failed };
 }
 
-async function setMailStatus(runtime, notificationId, status) {
+// 更新邮件通知的发送状态与尝试次数（0005 迁移新增 attempt_count 列）
+async function markMailStatus(runtime, notificationId, status, attemptCount) {
   const res = await runtime.invoke({
     op: 'db.exec_params',
     args: {
-      sql: 'UPDATE notification SET send_status = ? WHERE notification_id = ?;',
-      params: [status, notificationId],
+      sql: 'UPDATE notification SET send_status = ?, attempt_count = ? WHERE notification_id = ?;',
+      params: [status, attemptCount, notificationId],
     },
   });
   if (res.code !== 0) logger.error('mail status update failed', { notificationId, err: res.message });

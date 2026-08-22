@@ -61,17 +61,31 @@ nlohmann::json form_template_update(Db& db, const nlohmann::json& args) {
     return cfg_err(kDbError, "query failed: " + qerr);
   }
   if (rows.empty()) return cfg_err(kNotFound, "模板不存在");
-  const std::string fields_json = cfg_str(args, "fields_json");
-  if (const nlohmann::json* e = validateFieldsJson(fields_json)) return *e;
   const std::string name = cfg_str(args, "name");
   if (!name.empty() && name.size() > 50) return cfg_err(kValidation, "模板名称须为 1~50 字符");
-  if (db.execParams("UPDATE form_template SET name = ?, description = ?, fields_json = ? "
-                    "WHERE template_id = ?;",
-                    nlohmann::json::array(
-                        {name.empty() ? rows[0].value("name", "") : name,
-                         args.contains("description") ? cfg_str(args, "description")
-                                                      : rows[0].value("description", ""),
-                         fields_json, template_id})) != SQLITE_OK) {
+  // 动态 UPDATE：仅更新显式提供的字段；未传 fields_json 时保留原快照
+  //（审查 Issue 1：此前无条件写 cfg_str 默认值 "" 会清空字段快照）
+  std::string sql = "UPDATE form_template SET ";
+  nlohmann::json params = nlohmann::json::array();
+  if (!name.empty()) {
+    sql += "name = ?, ";
+    params.push_back(name);
+  }
+  if (args.contains("description")) {
+    sql += "description = ?, ";
+    params.push_back(cfg_str(args, "description"));
+  }
+  if (args.contains("fields_json")) {
+    const std::string fields_json = cfg_str(args, "fields_json");
+    if (const nlohmann::json* e = validateFieldsJson(fields_json)) return *e;
+    sql += "fields_json = ?, ";
+    params.push_back(fields_json);
+  }
+  if (params.empty()) return cfg_ok({{"ok", true}});  // 无可更新字段
+  sql.resize(sql.size() - 2);
+  sql += " WHERE template_id = ?;";
+  params.push_back(template_id);
+  if (db.execParams(sql, params) != SQLITE_OK) {
     return cfg_err(kDbError, "update failed: " + db.lastError());
   }
   audit_log(db, uid, "update_form_template", "template:" + std::to_string(template_id),

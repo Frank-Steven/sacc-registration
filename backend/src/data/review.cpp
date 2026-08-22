@@ -53,7 +53,10 @@ nlohmann::json registration_review(Db& db, const nlohmann::json& args) {
     // 驳回释放名额 → 同步递补候补队首（同一事务）
     promote_waitlist(db, activity_id, now);
   }
-  db.commit();
+  if (db.commit() != SQLITE_OK) {
+    db.rollback();
+    return cfg_err(kDbError, "commit failed: " + db.lastError());
+  }
 
   const std::int64_t target_uid = row["uid"].get<std::int64_t>();
   if (approve) {

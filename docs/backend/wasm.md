@@ -52,7 +52,7 @@ flowchart LR
 | `wasm_create_registration` / `wasm_submit_registration` | 报名创建 / 提交 |
 | `wasm_review_registration` | 审核（通过 / 驳回） |
 | `wasm_list_registrations` / `wasm_export_registrations` | 查询 / 导出 |
-| `wasm_export_chunk(offset, limit)` | 分页导出，避免大文件一次性过共享内存 |
+| `wasm_export_chunk(offset, limit)` | ~~分页导出~~（**已废弃**：M4 改为 cursor 分页，见 [export.md](export.md) 决策 1；由 `wasm_invoke` 的 `registration.export` 承担） |
 | `wasm_get_config` / `wasm_set_config` | 配置读写 |
 
 - 内存约定：`wasm_alloc` 分配宿主传入 buffer，结果写入共享线性内存，宿主读取后 `wasm_free` 释放。

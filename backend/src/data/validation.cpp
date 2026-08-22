@@ -1,6 +1,7 @@
 #include "data/validation.h"
 
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <map>
 #include <sqlite3.h>
@@ -212,9 +213,11 @@ bool parse_number(const nlohmann::json& v, std::int64_t& out) {
   if (v.is_string()) {
     const std::string& s = v.get_ref<const std::string&>();
     if (s.empty()) return false;
+    errno = 0;
     char* end = nullptr;
     const long long lv = std::strtoll(s.c_str(), &end, 10);
-    if (end != s.c_str() + s.size()) return false;
+    // 审查 Issue 7：检查 ERANGE，超长数字串（溢出钳制）不通过
+    if (errno == ERANGE || end != s.c_str() + s.size()) return false;
     out = static_cast<std::int64_t>(lv);
     return true;
   }

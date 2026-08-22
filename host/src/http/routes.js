@@ -18,14 +18,22 @@ export function createRoutes({ runtime, config }) {
     user,
   });
 
-  // 管理端 handler 工厂：JWT 鉴权 → args = body + query + path 参数映射 + uid
+  // 管理端 handler 工厂：JWT 鉴权 → args 组装 → 透传 wasm
   const admin = (op, pathMap = {}) => async (ctx) => {
     const auth = requireAuth(ctx, config);
     if (!auth) return { code: Errors.UNAUTHORIZED, message: '未登录或会话已过期' };
-    const args = { ...ctx.body, ...Object.fromEntries(ctx.query || []), uid: auth.uid };
+    // 审查 Issue 10：仅 GET 透传 query 作过滤参数；写方法只用 body + 路径参数，避免 query 覆盖 body
+    const args = ctx.method === 'GET'
+      ? { ...Object.fromEntries(ctx.query || []), uid: auth.uid }
+      : { ...ctx.body, uid: auth.uid };
     for (const [argKey, paramName] of Object.entries(pathMap)) {
       const v = ctx.params?.[paramName];
-      if (v !== undefined) args[argKey] = Number(v);
+      if (v === undefined) continue;
+      const num = Number(v);
+      if (!Number.isInteger(num) || num <= 0) {
+        return { code: Errors.VALIDATION, message: `路径参数 ${paramName} 必须为正整数` };
+      }
+      args[argKey] = num;
     }
     return runtime.invoke({ op, args });
   };
@@ -46,13 +54,12 @@ export function createRoutes({ runtime, config }) {
       pattern: /^\/api\/system\/status$/,
       handler: async () => {
         const uv = await runtime.invoke({ op: 'db.user_version' });
-        const tables = await runtime.invoke({ op: 'db.tables' });
+        // 审查 Issue 11：不暴露表名清单，仅保留版本与 schema 版本
         return {
           code: 0,
           data: {
             wasm: runtime.version,
             user_version: uv.code === Errors.OK ? uv.data?.user_version : undefined,
-            tables: tables.code === Errors.OK ? tables.data?.tables : undefined,
           },
         };
       },

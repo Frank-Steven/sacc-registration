@@ -48,7 +48,7 @@ flowchart LR
 | `auth.register` | `username` `password` + 可选 `name` `student_id` `college` `phone` `email` | `{ uid, username, name, ... }` | 422 参数格式 / 409 用户名已存在 |
 | `auth.login` | `username` `password` | `{ uid, username, name, email, ... }` | 401 用户名或密码错误 / 403 禁用或锁定 |
 | `auth.me` | `uid` | 同 login 的用户资料 | 404 账号不存在 |
-| `auth.reset_request` | `email` | `{ ok: true, token }`（M1 联调返回 token，SMTP 接入后移除） | 422 邮箱格式 |
+| `auth.reset_request` | `email` | `{ ok: true, token }`（⚠ M1 联调临时返回 token，**上线前必须移除**，见下方安全注意） | 422 邮箱格式 |
 | `auth.reset_confirm` | `token` `new_password` | `{ ok: true }` | 422 令牌无效或已过期 |
 
 ### host HTTP 路由
@@ -67,6 +67,8 @@ flowchart LR
 1. `auth.reset_request(email)`：按 `user.email` 查账号（不存在也返回成功，防枚举）；生成 32 字节随机 `reset_token`，`reset_expire = now + 3600`（1 小时）。
 2. `auth.reset_confirm(token, new_password)`：校验 token 存在且未过期 → 重算盐与哈希 → 更新密码，清空 token。
 3. 邮件送达由宿主 SMTP 完成（M1 暂未接入；开发期接口直接返回 token 便于联调，接入 SMTP 后改由邮件发送）。
+
+> ⚠ **安全注意（全链路审计 Issue 2）**：`auth.reset_request` 无认证门槛，联调阶段直接返回 `token`——任何知道已注册邮箱的人可借此重置他人密码（未认证账号接管）。**接入 SMTP 后必须移除 token 返回**（改为仅 `{ ok: true }`），并建议增加验证码 / 限流；上线前强制执行。
 
 ## 六、安全与边界
 

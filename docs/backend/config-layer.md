@@ -171,7 +171,7 @@ erDiagram
 | remark | TEXT | 说明 |
 | updated_at | INTEGER | 最近更新时间 |
 
-唯一约束 `(activity_id, config_key)`；`config_key` 用常量枚举登记。按活动形式配置：场地 `venue_name` / `venue_address`（线下）、参会 `meeting_link` / `meeting_pwd`（线上）、签到方式 `checkin_mode`（0 现场扫码 / 1 线上）、通知渠道 `notify_channel`。
+唯一约束 `(activity_id, config_key)`；`config_key` 用常量枚举登记。按活动形式配置：场地 `venue_name` / `venue_address`（线下）、参会 `meeting_link` / `meeting_pwd`（线上）、签到方式 `checkin_mode`（0 现场扫码 / 1 线上自助 / 2 线上动态码，见 [registration.md](registration.md) 六）、通知渠道 `notify_channel`。
 
 **`system_config`**（全局配置预留）
 

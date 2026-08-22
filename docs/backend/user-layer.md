@@ -125,11 +125,12 @@ erDiagram
 |---|---|---|
 | notification_id | INTEGER PK | 通知 id |
 | uid | INTEGER | 接收人 → `user` |
-| type | INTEGER | 0 报名成功 / 1 审核结果 / 2 活动提醒 |
+| type | INTEGER | 0 报名成功 / 1 审核结果 / 2 活动提醒 / 3 候补（扩展见 [registration.md](registration.md) 十二） |
 | title / content | TEXT | 标题 / 内容 |
 | is_read | INTEGER | 0 未读 / 1 已读 |
 | channel | INTEGER | 0 站内信 / 1 邮件 |
-| send_status | INTEGER | 0 待发送 / 1 已发送 / 2 失败（邮件由宿主 SMTP 发送并重试） |
+| send_status | INTEGER | 0 待发送 / 1 已发送 / 2 永久失败（无邮箱或重试达上限；邮件由宿主 SMTP 发送，异常置 0 自动重试） |
+| attempt_count | INTEGER | 邮件发送尝试次数（0005 迁移新增；每失败 +1，达上限置 send_status=2 终止重试） |
 | created_at | INTEGER | 通知时间 |
 
 **`subscribe`**（活动订阅）

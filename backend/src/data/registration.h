@@ -16,8 +16,9 @@ nlohmann::json registration_mine(Db& db, const nlohmann::json& args);
 nlohmann::json registration_admin_list(Db& db, const nlohmann::json& args);
 nlohmann::json registration_admin_detail(Db& db, const nlohmann::json& args);
 
-// 供 review.cpp（驳回释放名额）复用：事务内将候补队首递补为待审核 / 已通过并写通知
-void promote_waitlist(Db& db, std::int64_t activity_id, std::int64_t now);
+// 供 review.cpp（驳回释放名额）复用：事务内将候补队首递补为待审核 / 已通过并写通知；
+// 返回是否完成递补（无候补 / 名额不足 / 失败为 false，调用方据此回滚）
+bool promote_waitlist(Db& db, std::int64_t activity_id, std::int64_t now);
 
 // 报名记录行（未关联活动软删校验）；out 含 registration 全列 + activity 关键列
 bool registration_row(Db& db, std::int64_t registration_id, nlohmann::json& out);

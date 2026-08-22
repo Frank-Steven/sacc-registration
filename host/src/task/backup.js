@@ -108,7 +108,17 @@ export async function createBackup({ runtime, wasmPath, dbPath, verify = true, e
   if (res.code !== 0) throw new Error(`db.backup failed: ${res.message}`);
 
   if (verify && wasmPath) {
-    await verifyBackup({ wasmPath, backupFile: dest, expectedVersion });
+    try {
+      await verifyBackup({ wasmPath, backupFile: dest, expectedVersion });
+    } catch (err) {
+      // 审查 Issue 12：校验失败立即清理坏备份，避免残留误导后续排查
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        // 忽略清理失败
+      }
+      throw err;
+    }
   }
   runRetention(dir);
   return dest;

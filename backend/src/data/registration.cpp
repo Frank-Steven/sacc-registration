@@ -55,19 +55,21 @@ bool slot_available(Db& db, const nlohmann::json& act, std::int64_t activity_id)
 }
 
 // 名额不足时入候补：queue_no = 当前候补最大 + 1（须在事务内）
-void enqueue_waitlist(Db& db, std::int64_t registration_id, std::int64_t activity_id,
+// 返回是否成功；失败时调用方应回滚，避免留下 status=5 但 queue_no=NULL 的记录
+//（审查 Issue 3：NULL queue_no 会被 promote_waitlist 的 ORDER BY 提前递补插队）
+bool enqueue_waitlist(Db& db, std::int64_t registration_id, std::int64_t activity_id,
                       std::int64_t now) {
   nlohmann::json rows;
   std::string qerr;
   if (db.query("SELECT IFNULL(MAX(queue_no), 0) AS m FROM registration "
                "WHERE activity_id = ? AND status = 5;",
                nlohmann::json::array({activity_id}), rows, qerr) != SQLITE_OK || rows.empty()) {
-    return;
+    return false;
   }
   const std::int64_t queue_no = rows[0].value("m", 0) + 1;
-  db.execParams("UPDATE registration SET status = 5, queue_no = ?, updated_at = ? "
-                "WHERE registration_id = ?;",
-                nlohmann::json::array({queue_no, now, registration_id}));
+  return db.execParams("UPDATE registration SET status = 5, queue_no = ?, updated_at = ? "
+                       "WHERE registration_id = ?;",
+                       nlohmann::json::array({queue_no, now, registration_id})) == SQLITE_OK;
 }
 
 // 提交 / 重新提交后的目标状态（need_review 决定），名额已由调用方判定
@@ -113,30 +115,33 @@ bool registration_row(Db& db, std::int64_t registration_id, nlohmann::json& out)
   return reg_with_activity(db, registration_id, out);
 }
 
-void promote_waitlist(Db& db, std::int64_t activity_id, std::int64_t now) {
+// 同步递补候补队首（须在事务内）；返回是否完成递补（无候补 / 名额不足 / 失败为 false）
+bool promote_waitlist(Db& db, std::int64_t activity_id, std::int64_t now) {
   nlohmann::json rows;
   std::string qerr;
   if (db.query("SELECT registration_id, uid FROM registration "
-               "WHERE activity_id = ? AND status = 5 ORDER BY queue_no ASC LIMIT 1;",
+               "WHERE activity_id = ? AND status = 5 "
+               "ORDER BY queue_no IS NULL, queue_no ASC LIMIT 1;",
                nlohmann::json::array({activity_id}), rows, qerr) != SQLITE_OK || rows.empty()) {
-    return;
+    return false;
   }
   nlohmann::json act;
-  if (!activity_row(db, activity_id, true, act)) return;
+  if (!activity_row(db, activity_id, true, act)) return false;
   // 递补前复核剩余名额：max_slots 可能已被调小（activity.update 允许），
   // 名额已满则不递补（保持候补），避免超员（审查 Issue 1）
-  if (!slot_available(db, act, activity_id)) return;
+  if (!slot_available(db, act, activity_id)) return false;
   const int new_status = target_status_after_submit(act);
   const std::int64_t rid = rows[0]["registration_id"].get<std::int64_t>();
   const std::int64_t uid = rows[0]["uid"].get<std::int64_t>();
   if (db.execParams("UPDATE registration SET status = ?, queue_no = NULL, updated_at = ? "
                     "WHERE registration_id = ?;",
                     nlohmann::json::array({new_status, now, rid})) != SQLITE_OK) {
-    return;
+    return false;
   }
   notify(db, uid, 3, "候补递补成功",
          "您报名的「" + act.value("name", "") + "」已获得名额，请留意后续安排。",
          activity_id);
+  return true;
 }
 
 nlohmann::json registration_create(Db& db, const nlohmann::json& args) {
@@ -297,14 +302,21 @@ nlohmann::json registration_submit(Db& db, const nlohmann::json& args) {
     return cfg_err(kDbError, "update failed: " + db.lastError());
   }
   if (new_status == 5) {
-    enqueue_waitlist(db, registration_id, activity_id, now);
+    // 入队失败（写异常）→ 回滚，避免 status=5 但 queue_no=NULL 的插队记录（审查 Issue 3）
+    if (!enqueue_waitlist(db, registration_id, activity_id, now)) {
+      db.rollback();
+      return cfg_err(kDbError, "候补入队失败: " + db.lastError());
+    }
     nlohmann::json rows;
     if (db.query("SELECT queue_no FROM registration WHERE registration_id = ?;",
                  nlohmann::json::array({registration_id}), rows, qerr) == SQLITE_OK && !rows.empty()) {
       queue_no = rows[0].value("queue_no", 0);
     }
   }
-  db.commit();
+  if (db.commit() != SQLITE_OK) {
+    db.rollback();
+    return cfg_err(kDbError, "commit failed: " + db.lastError());
+  }
 
   if (new_status == 5) {
     notify(db, uid, 3, "报名候补",
@@ -347,10 +359,14 @@ nlohmann::json registration_cancel(Db& db, const nlohmann::json& args) {
     return cfg_err(kDbError, "update failed: " + db.lastError());
   }
   // 占用名额的取消（1/2）释放名额并同步递补（registration.md 二）
+  // 注：promote_waitlist 返回 false 可能是"无候补 / 名额不足"（正常路径），不视为失败
   if (status == 1 || status == 2) {
     promote_waitlist(db, activity_id, now);
   }
-  db.commit();
+  if (db.commit() != SQLITE_OK) {
+    db.rollback();
+    return cfg_err(kDbError, "commit failed: " + db.lastError());
+  }
   return cfg_ok({{"ok", true}});
 }
 

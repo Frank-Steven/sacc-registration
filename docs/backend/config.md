@@ -44,7 +44,9 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | 活动配置 | ✅ | ✅ 授权分组内 | 只读 |
 | 系统配置 | ✅ | ❌ | ❌ |
 | 角色授权（user_role） | ✅ | ❌ | ❌ |
-| 审计日志 | ✅ 全部 | ✅ 授权分组内 | ❌ |
+| 审计日志 | ✅ 全部 | ❌（暂仅超管） | ❌ |
+
+> **备注（审计日志）**：活动管理员按授权分组过滤审计暂未实现，`audit_log.list` 目前仅超管可查；后续可按 1.2 分组范围模式扩展。
 
 ### 1.4 鉴权约定
 
@@ -196,8 +198,8 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 ### 3.5 配置
 
 - **key 常量枚举登记**（代码常量 + 白名单校验，未登记 key 拒绝 422）：
-  - 活动级：`venue_name` / `venue_address`（线下）、`meeting_link` / `meeting_pwd`（线上）、`checkin_mode`（0 现场扫码 / 1 线上）、`notify_channel`（0 站内信 / 1 邮件）
-  - 全局：`site_name`、`max_upload_size`
+  - 活动级：`venue_name` / `venue_address`（线下）、`meeting_link` / `meeting_pwd`（线上）、`checkin_mode`（0 现场扫码 / 1 线上自助 / 2 线上动态码）、`notify_channel`（0 站内信 / 1 邮件）
+  - 全局：`site_name`、`max_upload_size`、`checkin_secret`（签到动态码密钥，见 [registration.md](registration.md) 6.1）
 - `set` 校验 `config_type` 与值格式：0 布尔 / 1 数字 / 2 文本 / 3 JSON；不符 422。
 
 ### 3.6 审计日志

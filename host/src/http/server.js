@@ -24,27 +24,26 @@ function sendJson(res, status, body) {
 const MAX_BODY_BYTES = 1024 * 1024;
 
 class BodyTooLargeError extends Error {}
+class BadJsonError extends Error {}
 
 async function readJsonBody(req) {
   const chunks = [];
   let total = 0;
-  let tooLarge = false;
   for await (const chunk of req) {
     total += chunk.length;
     if (total > MAX_BODY_BYTES) {
-      // 超限后停止累积、继续读完剩余数据（不提前销毁流，保证 413 响应可达）
-      tooLarge = true;
-      continue;
+      // 超限立即中止读取（审查 Issue 13：不再完整读完恶意大 body，由外层回 413 + 断连）
+      throw new BodyTooLargeError();
     }
     chunks.push(chunk);
   }
-  if (tooLarge) throw new BodyTooLargeError();
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
   try {
     return JSON.parse(raw);
   } catch {
-    return {};
+    // 审查 Issue 9：坏 JSON 显式报 400，而非静默当空参数（避免 PUT 全字段回退的静默无操作更新）
+    throw new BadJsonError();
   }
 }
 
@@ -122,7 +121,7 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
           sendJson(res, 404, { code: Errors.NOT_FOUND, message: 'not found' });
           return;
         }
-        const out = await route.handler({ query: url.searchParams, body, headers: req.headers, params });
+        const out = await route.handler({ query: url.searchParams, body, headers: req.headers, params, method: req.method });
         // 下载型响应（M4 export.csv）：写 raw 内容 + Content-Disposition，而非 JSON
         if (out && out.download && out.code === 0) {
           res.writeHead(200, {
@@ -140,6 +139,16 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
     } catch (err) {
       if (err instanceof BodyTooLargeError) {
         sendJson(res, 413, { code: Errors.PAYLOAD_TOO_LARGE, message: '请求体过大' });
+        req.destroy(); // 提前断开，避免继续读入剩余大请求体（审查 Issue 13）
+        return;
+      }
+      if (err instanceof BadJsonError) {
+        sendJson(res, 400, { code: Errors.INVALID_REQUEST, message: '请求体不是合法 JSON' });
+        return;
+      }
+      if (err instanceof URIError) {
+        // 非法百分号编码路径参数（审查 Issue 8）：400 而非 500
+        sendJson(res, 400, { code: Errors.INVALID_REQUEST, message: '路径参数编码非法' });
         return;
       }
       logger.error('request failed', { err: err.message });

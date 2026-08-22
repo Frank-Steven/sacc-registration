@@ -86,7 +86,7 @@
 
 ### 3.2 `registration.trend` — 每日报名趋势
 
-参数：`activity_id`、`uid`、`days`（默认 7，上限 90）；返回 `[{ date, count }]`：
+参数：`activity_id`、`uid`、`days`（默认 7，上限 90）；返回 `{ days, items }`（`items` 为 `[{ date, count }]`）：
 - `date`：`date(created_at, 'unixepoch')`（UTC 日期，前端转本地，决策 8）
 - `count`：按天统计**提交数**（`status IN (1,2,3,4,5)`，不含草稿）；无记录的天补 0（wasm 内补全）
 
@@ -123,7 +123,7 @@
 - 状态枚举、名额语义与 [registration.md](registration.md) 一致
 - 软删：活动软删不可导出（404）；已软删字段不参与列装配（历史值不导出，库内可追溯）
 - CSV 转义：字段含逗号 / 引号 / 换行时按 RFC 4180 转义
-- 导出 limit 超上限 → 422；`cursor` 非法（非整数 / 负数）→ 422
+- 导出 limit 超上限 → **钳制到 5000**（`kMaxExportLimit`，行为宽容不报错）；`cursor` 非法（非整数 / 负数）→ 422
 
 ## 六、性能与索引
 

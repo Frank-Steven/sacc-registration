@@ -1,5 +1,6 @@
 #include "config/authz.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <sqlite3.h>
 
@@ -31,9 +32,10 @@ std::int64_t cfg_int(const nlohmann::json& args, const char* key, std::int64_t d
     // wasm 无异常构建，用 strtoll 替代 std::stoll（无 throw）
     const std::string& s = it->get<std::string>();
     if (s.empty()) return def;
+    errno = 0;
     char* end = nullptr;
     const long long v = std::strtoll(s.c_str(), &end, 10);
-    if (end != s.c_str() + s.size()) return def;  // 非纯数字串
+    if (errno == ERANGE || end != s.c_str() + s.size()) return def;  // 溢出/非纯数字串
     return v;
   }
   return def;

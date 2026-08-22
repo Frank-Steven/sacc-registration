@@ -281,7 +281,9 @@ nlohmann::json auth_reset_request(Db& db, const nlohmann::json& args) {
       SQLITE_OK) {
     return err(kDbError, "update failed: " + db.lastError());
   }
-  // M1 无 SMTP：联调阶段直接返回令牌，接入邮件后移除
+  // ⚠ 安全注意（审查 Issue 2）：本接口无认证门槛，联调阶段直接返回令牌——
+  // 任何知道已注册邮箱的人可借此重置他人密码（未认证账号接管）。
+  // 接入 SMTP 邮件发送后必须移除本返回值（改为仅返回 ok），并建议增加验证码 / 限流；上线前强制执行。
   return ok({{"ok", true}, {"token", token}});
 }
 
