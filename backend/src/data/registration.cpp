@@ -34,21 +34,24 @@ bool in_apply_window(const nlohmann::json& act, std::int64_t now) {
   return (s == 0 || now >= s) && (e == 0 || now < e);
 }
 
-// 当前占用名额数（仅 status IN (1,2) 占名额，registration.md 二）
+// 当前占用名额数（仅 status IN (1,2) 占名额，registration.md 二）；
+// 查询失败返回 -1（不视为 0），避免 fail-open 放行报名
 std::int64_t count_taken(Db& db, std::int64_t activity_id) {
   nlohmann::json rows;
   std::string qerr;
   if (db.query("SELECT COUNT(*) AS c FROM registration WHERE activity_id = ? AND status IN (1,2);",
                nlohmann::json::array({activity_id}), rows, qerr) != SQLITE_OK || rows.empty()) {
-    return 0;
+    return -1;
   }
   return rows[0].value("c", 0);
 }
 
-// 活动是否有剩余名额（max_slots==0 不限）
+// 活动是否有剩余名额（max_slots==0 不限）；占用数未知（-1）时保守判定无空位
 bool slot_available(Db& db, const nlohmann::json& act, std::int64_t activity_id) {
   const std::int64_t max_slots = act.value("max_slots", 0);
-  return max_slots == 0 || count_taken(db, activity_id) < max_slots;
+  if (max_slots == 0) return true;
+  const std::int64_t taken = count_taken(db, activity_id);
+  return taken >= 0 && taken < max_slots;
 }
 
 // 名额不足时入候补：queue_no = 当前候补最大 + 1（须在事务内）
@@ -120,6 +123,9 @@ void promote_waitlist(Db& db, std::int64_t activity_id, std::int64_t now) {
   }
   nlohmann::json act;
   if (!activity_row(db, activity_id, true, act)) return;
+  // 递补前复核剩余名额：max_slots 可能已被调小（activity.update 允许），
+  // 名额已满则不递补（保持候补），避免超员（审查 Issue 1）
+  if (!slot_available(db, act, activity_id)) return;
   const int new_status = target_status_after_submit(act);
   const std::int64_t rid = rows[0]["registration_id"].get<std::int64_t>();
   const std::int64_t uid = rows[0]["uid"].get<std::int64_t>();
@@ -208,7 +214,7 @@ nlohmann::json registration_save(Db& db, const nlohmann::json& args) {
     std::string qerr;
     if (db.query("SELECT 1 FROM form_field f JOIN form fm ON f.form_id = fm.form_id "
                  "WHERE f.field_id = ? AND fm.activity_id = ? AND fm.is_deleted = 0 "
-                 "AND f.is_deleted = 0 LIMIT 1;",
+                 "AND f.is_deleted = 0 AND f.is_visible = 1 LIMIT 1;",
                  nlohmann::json::array({fid, activity_id}), rows, qerr) != SQLITE_OK) {
       db.rollback();
       return cfg_err(kDbError, "query failed: " + qerr);

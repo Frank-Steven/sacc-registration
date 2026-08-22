@@ -825,6 +825,18 @@ int main() {
     CHECK(invoke(rdb, R"({"op":"subscribe.remove","args":{"uid":)" + std::to_string(u2) +
                       R"(,"activity_id":)" + std::to_string(act) + R"(}})")["code"] == 0);
 
+    // ===== 审查 Issue 1：max_slots 调小后取消不触发超员递补 =====
+    // 当前 u1、u4 已通过（占满 2 名额），u3 候补；管理员把 max_slots 调小到 1
+    CHECK(invoke(rdb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(,"max_slots":1}})")["code"] == 0);
+    // u1 取消释放 1 名额，但 max_slots=1 已满 → 递补须复核名额，u3 应保持候补
+    CHECK(invoke(rdb, R"({"op":"registration.cancel","args":{"uid":)" + std::to_string(u1) +
+                      R"(,"registration_id":)" + std::to_string(r1) + R"(}})")["code"] == 0);
+    rr = invoke(rdb, R"({"op":"registration.detail","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"registration_id":)" + std::to_string(r3) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["registration"]["status"] == 5 &&
+          rr["data"]["registration"]["queue_no"] == 1);
+
     rdb.close();
     std::remove(reg_path.c_str());
   }

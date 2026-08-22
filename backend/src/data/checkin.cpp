@@ -68,9 +68,9 @@ std::string totp_code(const std::string& secret, std::int64_t activity_id, std::
   return buf;
 }
 
-// 校验动态码：接受当前槽 + 前 1 槽（防跨槽边界）
-bool code_valid(Db& db, std::int64_t activity_id, const std::string& code, std::int64_t now) {
-  const std::string secret = checkin_secret(db);
+// 校验动态码：接受当前槽 + 前 1 槽（防跨槽边界）；secret 由调用方先取（区分未配置与输错）
+bool code_valid(const std::string& secret, std::int64_t activity_id, const std::string& code,
+                std::int64_t now) {
   if (secret.empty() || code.size() != 6) return false;
   const std::int64_t slot = now / 60;
   if (totp_code(secret, activity_id, slot) == code) return true;
@@ -155,8 +155,10 @@ nlohmann::json checkin_code(Db& db, const nlohmann::json& args) {
   }
   if (rows.empty()) return cfg_err(kConflict, "无待签到的已通过报名");
 
+  const std::string secret = checkin_secret(db);
+  if (secret.empty()) return cfg_err(kValidation, "未配置签到密钥（system_config.checkin_secret）");
   const std::int64_t now = now_ts();
-  if (!code_valid(db, activity_id, code, now)) return cfg_err(kValidation, "签到码错误或已过期");
+  if (!code_valid(secret, activity_id, code, now)) return cfg_err(kValidation, "签到码错误或已过期");
   return do_checkin(db, rows[0]["registration_id"].get<std::int64_t>(), uid, false);
 }
 

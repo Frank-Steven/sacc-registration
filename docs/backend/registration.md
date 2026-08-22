@@ -55,6 +55,7 @@
 - 入队：`queue_no = (SELECT IFNULL(MAX(queue_no),0)+1 FROM registration WHERE activity_id=? AND status=5)`，事务内保证连续无重。
 - 递补成功：`queue_no` 置 NULL（不再排队）。
 - 取消 / 驳回释放名额后，**同一事务内**取出该活动 `queue_no` 最小（`ORDER BY queue_no ASC LIMIT 1`）的候补记录，按 `need_review` 递补为 1 / 2，并写入通知。即「同步递补」，无定时任务、无延迟、无需中间态。
+- **递补前复核剩余名额**：`max_slots` 可被管理员调小（`activity.update`），递补须 `slot_available` 通过才执行，避免已通过人数超过当前上限。
 
 ### 2.3 递补链路（无独立 op）
 
@@ -147,7 +148,7 @@
 | 活动开始提醒 | 2 活动提醒 | 即将开始 | 见 7.3 |
 
 - 站内信：`channel=0`，`send_status=1`（直写即达）。
-- 邮件：`channel=1`，`send_status=0`（待发送），由宿主 SMTP 定时任务发送并置 1 / 失败置 2（重试，见 [development.md](../development.md) 五）。
+- 邮件：`channel=1`，`send_status=0`（待发送），由宿主 SMTP 定时任务发送；成功置 1，**发送异常置 0（下次扫描自动重试）**，无邮箱置 2 终止（见 [development.md](../development.md) 五）。
 - 渠道选择优先 `user_notify_pref`，未配置按活动 `notify_channel`；无邮箱（`user.email` 空）时降级站内信。
 
 ### 7.2 通知查询 ops

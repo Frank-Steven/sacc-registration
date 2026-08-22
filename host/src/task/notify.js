@@ -1,9 +1,14 @@
 // 通知任务（registration.md 7.3 / development.md 五）：
 // - 活动提醒：扫描 start_time ∈ (now, now+lookahead) 的活动，给「订阅者 + 已通过报名者」
 //   生成 type 2 提醒；幂等按 (uid, type=2, activity_id) 判重（0003 迁移新增 activity_id 列）。
-// - 邮件队列：channel=1 且 send_status=0 的通知经注入的 sendMail 发送，成功置 1 / 失败置 2
-//   （可重试）；sendMail 未提供时仅告警，不消费队列（SMTP 配置就绪后自然续发）。
+//   批量取数（一次扫描 3~4 次 wasm 往返，与目标人数无关），避免 N+1。
+// - 邮件队列：channel=1 且 send_status=0 的通知经注入的 sendMail 发送；成功置 1，
+//   发送异常置 0（下次扫描自动重试），无邮箱置 2（永久终止）；sendMail 未提供时仅告警，
+//   不消费队列（SMTP 配置就绪后自然续发）。
 import { logger } from '../logger.js';
+
+// 单批 SQL 参数个数上限：SQLite 参数上限默认 32766，留余量取 200 行 × 9 列
+const BATCH_SIZE = 200;
 
 // Unix 秒 → "YYYY-MM-DD HH:mm"（服务器本地时区，供提醒文案展示开始时间）
 function fmtDateTime(ts) {
@@ -46,11 +51,37 @@ export async function runReminders({ runtime, lookaheadSec = 3600, nowSec } = {}
       },
     });
     if (targets.code !== 0) continue;
-    const targetIds = (targets.data?.rows ?? []).map((r) => r.uid).filter((u) => Number.isInteger(u));
-    if (targetIds.length === 0) continue;
+    let uids = (targets.data?.rows ?? []).map((r) => r.uid).filter((u) => Number.isInteger(u));
+    if (uids.length === 0) continue;
 
-    // 幂等：同一 uid 对同一活动已生成过 type 2 提醒则跳过（0003 迁移后按 activity_id 判重，
+    // 幂等：跳过已生成过 type 2 提醒的 uid（0003 迁移后按 activity_id 判重，
     // 不再依赖 content 字符串，活动同名也不会误判）
+    const existingRes = await runtime.invoke({
+      op: 'db.query',
+      args: {
+        sql: 'SELECT DISTINCT uid FROM notification WHERE type = 2 AND activity_id = ?;',
+        params: [activityId],
+      },
+    });
+    if (existingRes.code !== 0) continue;
+    const notified = new Set((existingRes.data?.rows ?? []).map((r) => r.uid));
+    uids = uids.filter((u) => !notified.has(u));
+    if (uids.length === 0) continue;
+
+    // 渠道偏好批量取（IN 展开）
+    const prefRes = await runtime.invoke({
+      op: 'db.query',
+      args: {
+        sql: 'SELECT uid, channel FROM user_notify_pref WHERE notify_type = 2 AND uid IN (' +
+          uids.map(() => '?').join(',') + ');',
+        params: uids,
+      },
+    });
+    if (prefRes.code !== 0) continue;
+    const pref = new Map();
+    for (const r of prefRes.data?.rows ?? []) pref.set(r.uid, Number(r.channel) || 0);
+
+    // 活动级渠道（通知的默认渠道）
     const cfg = await runtime.invoke({
       op: 'db.query',
       args: {
@@ -60,51 +91,46 @@ export async function runReminders({ runtime, lookaheadSec = 3600, nowSec } = {}
     });
     const actEmail = cfg.code === 0 && (cfg.data?.rows?.[0]?.config_value) === '1';
 
+    // 邮件降级：预计走邮件的 uid 中无邮箱的改走站内信（批量取有邮箱的集合）
+    const mailUids = uids.filter((u) => (pref.get(u) ?? (actEmail ? 1 : 0)) === 1);
+    const hasMail = new Set();
+    if (mailUids.length > 0) {
+      const mailRes = await runtime.invoke({
+        op: 'db.query',
+        args: {
+          sql: "SELECT uid FROM \"user\" WHERE email != '' AND uid IN (" +
+            mailUids.map(() => '?').join(',') + ');',
+          params: mailUids,
+        },
+      });
+      if (mailRes.code !== 0) continue;
+      for (const r of mailRes.data?.rows ?? []) hasMail.add(r.uid);
+    }
+
     const title = '活动即将开始';
     const content = `[#${activityId}]「${act.name}」将于 ${fmtDateTime(act.start_time)} 开始，请做好准备。`;
-    for (const uid of targetIds) {
-      const existing = await runtime.invoke({
-        op: 'db.query',
-        args: {
-          sql: 'SELECT 1 FROM notification WHERE uid = ? AND type = 2 AND activity_id = ? LIMIT 1;',
-          params: [uid, activityId],
-        },
-      });
-      if (existing.code === 0 && (existing.data?.rows ?? []).length > 0) continue;
-      // 渠道：用户偏好（notify_type=2）优先；否则活动渠道；邮件需有邮箱，否则降级站内信
-      const pref = await runtime.invoke({
-        op: 'db.query',
-        args: {
-          sql: 'SELECT channel FROM user_notify_pref WHERE uid = ? AND notify_type = 2 LIMIT 1;',
-          params: [uid],
-        },
-      });
-      let channel = 0;
-      if (pref.code === 0 && (pref.data?.rows?.[0]) !== undefined) {
-        channel = Number(pref.data.rows[0].channel) || 0;
-      } else if (actEmail) {
-        channel = 1;
-      }
-      if (channel === 1) {
-        const mail = await runtime.invoke({
-          op: 'db.query',
-          args: { sql: "SELECT 1 FROM \"user\" WHERE uid = ? AND email != '' LIMIT 1;", params: [uid] },
-        });
-        if (mail.code !== 0 || (mail.data?.rows ?? []).length === 0) channel = 0;
-      }
-      const sendStatus = channel === 0 ? 1 : 0;
-      // 参数化写入（db.exec_params），避免字符串拼接注入/引号破坏
+    const rows = [];
+    for (const uid of uids) {
+      let channel = pref.has(uid) ? pref.get(uid) : (actEmail ? 1 : 0);
+      if (channel === 1 && !hasMail.has(uid)) channel = 0;
+      rows.push([uid, 2, title, content, 0, channel, channel === 0 ? 1 : 0, activityId, now]);
+    }
+    // 批量写入（分批控制参数个数）
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
       const res = await runtime.invoke({
         op: 'db.exec_params',
         args: {
           sql: 'INSERT INTO notification (uid, type, title, content, is_read, channel, send_status, activity_id, created_at) ' +
-            'VALUES (?, 2, ?, ?, 0, ?, ?, ?, ?);',
-          params: [uid, title, content, channel, sendStatus, activityId, now],
+            'VALUES ' + placeholders + ';',
+          params: batch.flat(),
         },
       });
-      if (res.code === 0) sent += 1;
+      if (res.code === 0) sent += batch.length;
+      else logger.error('reminder insert failed', { activityId, err: res.message });
     }
-    logger.info('activity reminder generated', { activityId, name: act.name, targets: targetIds.length });
+    logger.info('activity reminder generated', { activityId, name: act.name, targets: uids.length });
   }
   return { activities: activities.length, sent };
 }
@@ -136,20 +162,21 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
   let failed = 0;
   for (const row of rows) {
     if (!row.email) {
+      // 无邮箱属永久失败（用户不会补邮箱就重试）：置 2 终止，不再进队列
       await setMailStatus(runtime, row.notification_id, 2);
       failed += 1;
       continue;
     }
-    let status = 1;
     try {
       await sendMail({ to: row.email, subject: row.title, text: row.content });
+      await setMailStatus(runtime, row.notification_id, 1);  // 成功
       sent += 1;
     } catch (err) {
-      status = 2;
+      // 发送异常（SMTP 抖动等）：置 0 回队列，下次扫描自动重试
+      await setMailStatus(runtime, row.notification_id, 0);
       failed += 1;
-      logger.warn('mail send failed', { id: row.notification_id, err: err.message });
+      logger.warn('mail send failed, will retry', { id: row.notification_id, err: err.message });
     }
-    await setMailStatus(runtime, row.notification_id, status);
   }
   return { sent, failed, pending: rows.length - sent - failed };
 }
