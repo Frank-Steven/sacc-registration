@@ -52,6 +52,9 @@ public:
   // 最近一次写语句影响的行数
   int lastChanges() const;
 
+  // 在线备份：sqlite3_backup 复制主库到目标文件（WAL 一致，disaster-recovery.md 2.1）
+  int backupTo(const std::string& dest_path);
+
   // 最近错误信息
   std::string lastError() const;
 

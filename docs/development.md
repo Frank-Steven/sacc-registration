@@ -10,7 +10,7 @@
 |---|---|---|
 | M0 工程骨架 | 仓库结构、构建脚本、CI、数据库迁移框架 | `backend.wasm` 空模块可编译、宿主可调用 ✅ 已完成 |
 | M1 数据层核心 | 建表 DDL、WASM ABI 骨架、注册 / 登录（哈希 / 锁定 / 重置） | 账号体系可用 ✅ 已完成 |
-| M2 配置层 | 活动 / 分组 / 表单 / 字段 / 模板 / 配置、角色与分组权限 | 管理端配置 API |
+| M2 配置层 | 活动 / 分组 / 表单 / 字段 / 模板 / 配置、角色与分组权限 | 管理端配置 API ✅ 已完成（含灾难恢复落地） |
 | M3 报名链路 | 草稿 / 提交 / 防超卖 / 候补递补 / 审核 / 修改取消 / 签到 / 通知 | 报名全流程 API |
 | M4 导出统计 | 名单分块导出、聚合统计 | 导出与看板 API |
 | M5 前端基础 | Vite + React + antd 工程、路由 / 布局、请求与缓存层 | 报名端可浏览 |
@@ -61,11 +61,14 @@ sacc-registration/
 - 安全：PBKDF2-HMAC-SHA256（100k 迭代）哈希在模块内完成（决策见 [auth.md](backend/auth.md)）
 
 **M2（配置层）**
-- 活动 CRUD（`activity_type` / `need_review` / `allow_modify` / 软删）
+- 设计文档：[config.md](backend/config.md)（接口契约 / 权限模型 / 业务规则 / 决策记录）
+- 活动 CRUD（`activity_type` / `need_review` / `allow_modify` / 软删、状态转移表）
 - 分组树：递归 CTE 查询子树、`activity_group` 多对多
 - 表单 / 字段：只追加、`field_key` 不可变、软删；`validation` JSON 解析；`form_template` 快照套用
 - 配置：`activity_config` / `system_config` 键值读写（`config_type` 类型化）
 - 权限：`user_role` 分组范围递归判定（GROUP BY 授权分组展开）
+- 灾难恢复（随 M2 一并落地）：`db.backup` wasm op + 宿主定时备份/保留策略 + 迁移前自动备份 + 启动自检，见 [disaster-recovery.md](backend/disaster-recovery.md)
+- ✅ 已完成：backend `src/config/` 7 模块 + 迁移 `0002_seed_roles.sql`；host 路径参数路由 + `/api/admin/*` + 公开读路由 + `task/backup.js`；native 单测与 host smoke（HTTP 全链路）全量通过
 
 **M3（报名链路）**
 - 报名：`(activity_id, uid)` 唯一校验 → 草稿（`current_step`）→ 提交生成 `receipt_no`
@@ -84,7 +87,7 @@ sacc-registration/
 - HTTP 路由 + 会话鉴权（token 校验）、静态资源托管
 - WebSocket：通知未读 / 审核结果 / 递补事件推送（断线重连 + 轮询兜底）
 - SMTP：邮件发送队列 + 重试；定时任务：活动提醒、递补执行
-- 部署：单实例进程（wasm 模块 + `sacc.db`），备份定时执行（SQLite backup API）
+- 部署：单实例进程（wasm 模块 + `sacc.db`）；备份（`db.backup` op + 定时任务 + 保留策略）、恢复与监控见 [disaster-recovery.md](backend/disaster-recovery.md)
 
 ## 六、前端实现计划（frontend/）
 

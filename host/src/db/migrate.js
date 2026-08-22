@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from '../logger.js';
+import { createBackup } from '../task/backup.js';
 
 // 宿主启动时按 PRAGMA user_version 顺序执行 db/migrations/NNNN_*.sql
 // SQL 在 wasm 模块内的事务中执行（BEGIN/COMMIT + user_version 更新）
-export async function runMigrations(runtime, { root, dbPath }) {
+// 有待执行迁移且库非空（user_version > 0）时，先自动备份（disaster-recovery.md 2.1）
+export async function runMigrations(runtime, { root, dbPath, wasmPath }) {
   const dir = path.join(root, 'db', 'migrations');
   const files = fs
     .readdirSync(dir)
@@ -16,6 +18,11 @@ export async function runMigrations(runtime, { root, dbPath }) {
   if (init.code !== 0) throw new Error(`db.init failed: ${init.message}`);
 
   let current = init.data.user_version;
+  const pending = files.filter((f) => Number(f.slice(0, 4)) > current);
+  if (pending.length > 0 && current > 0) {
+    const dest = await createBackup({ runtime, wasmPath, dbPath, verify: Boolean(wasmPath) });
+    logger.info('pre-migration backup created', { file: dest });
+  }
   for (const file of files) {
     const version = Number(file.slice(0, 4));
     if (version <= current) continue;

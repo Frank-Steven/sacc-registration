@@ -12,6 +12,13 @@ add_executable(backend_wasm
   ${SACC_SOURCES_DIR}/src/core/dispatch.cpp
   ${SACC_SOURCES_DIR}/src/crypto/kdf.cpp
   ${SACC_SOURCES_DIR}/src/user/auth.cpp
+  ${SACC_SOURCES_DIR}/src/config/authz.cpp
+  ${SACC_SOURCES_DIR}/src/config/activity.cpp
+  ${SACC_SOURCES_DIR}/src/config/group.cpp
+  ${SACC_SOURCES_DIR}/src/config/form.cpp
+  ${SACC_SOURCES_DIR}/src/config/template.cpp
+  ${SACC_SOURCES_DIR}/src/config/config.cpp
+  ${SACC_SOURCES_DIR}/src/config/role.cpp
   ${SACC_SOURCES_DIR}/third_party/sqlite/sqlite3.c
 )
 

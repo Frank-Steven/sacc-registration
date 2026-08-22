@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WasmRuntime } from '../src/wasm-runtime/runtime.js';
 import { runMigrations } from '../src/db/migrate.js';
+import { createBackup } from '../src/task/backup.js';
 import { createRoutes } from '../src/http/routes.js';
 import { createServer } from '../src/http/server.js';
 import { signJwt, verifyJwt } from '../src/auth/jwt.js';
@@ -46,7 +47,7 @@ test('migrations: 空库初始化为版本 1 并建全部表', async () => {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 1);
+    assert.equal(version, 2);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
@@ -67,8 +68,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 1);
-    assert.equal(v2, 1);
+    assert.equal(v1, 2);
+    assert.equal(v2, 2);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -223,6 +224,147 @@ test('http: 超限请求体返回 413（防内存耗尽 DoS）', async () => {
     assert.equal(res.status, 413);
     const json = await res.json();
     assert.equal(json.code, 413);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('backup: db.backup 生成可读备份（integrity + user_version + 保留策略）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  try {
+    const reg = await runtime.invoke({
+      op: 'auth.register',
+      args: { username: 'alice', password: 'secret1234' },
+    });
+    assert.equal(reg.code, 0);
+
+    const dbPath = path.join(tmp, 'sacc_test.db');
+    const dest = await createBackup({ runtime, wasmPath: WASM_PATH, dbPath });
+    assert.ok(dest.includes(path.join('backup', 'sacc-')));
+    // 校验环节已 load 到临时 runtime：integrity_check + user_version(2) + 表冒烟
+    const backupDir = path.join(tmp, 'backup');
+    assert.equal(readdirSync(backupDir).length, 1);
+
+    await createBackup({ runtime, wasmPath: WASM_PATH, dbPath });
+    assert.equal(readdirSync(backupDir).length, 2, '最近 7 份内全保留');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http admin: M2 配置层全链路（鉴权 / 活动 / 分组 / 表单 / 模板 / 配置 / 审计 / 公开读）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m2-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+  const del = (p, headers = {}) => fetch(`${base}${p}`, { method: 'DELETE', headers });
+
+  try {
+    // 未登录访问管理端 → 401
+    assert.equal((await get('/api/admin/activities')).status, 401);
+
+    const regRoot = await (await post('/api/auth/register', { username: 'root', password: 'secret1234' })).json();
+    assert.equal(regRoot.code, 0);
+    const rootUid = regRoot.data.user.uid;
+    const rootH = { authorization: `Bearer ${regRoot.data.token}` };
+
+    const regAdmin = await (await post('/api/auth/register', { username: 'admin_a', password: 'secret1234' })).json();
+    assert.equal(regAdmin.code, 0);
+    const adminUid = regAdmin.data.user.uid;
+    const adminH = { authorization: `Bearer ${regAdmin.data.token}` };
+
+    // 引导首个超管（直接写 user_role，同 native 单测）；db.exec op 无参数绑定，uid 拼入 SQL
+    const boot = await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${rootUid}, 1, NULL);` },
+    });
+    assert.equal(boot.code, 0);
+
+    // 建分组 g1 → 授权 admin_a（role2 / g1）
+    const g = await (await post('/api/admin/groups', { name: 'Group1' }, rootH)).json();
+    assert.equal(g.code, 0);
+    const grant = await (await post(`/api/admin/roles/2/users`, { target_uid: adminUid, group_id: g.data.group_id }, rootH)).json();
+    assert.equal(grant.code, 0);
+    const myRoles = await (await get(`/api/admin/users/${adminUid}/roles`, rootH)).json();
+    assert.equal(myRoles.code, 0);
+    assert.equal(myRoles.data.items.length, 1);
+
+    // root 建活动 act1（未绑定分组 → admin_a 不可见 → 403）
+    const act = await (await post('/api/admin/activities', { name: 'Seminar 2026', activity_type: 0 }, rootH)).json();
+    assert.equal(act.code, 0);
+    const act1 = act.data.activity_id;
+    const forb = await (await get(`/api/admin/activities/${act1}`, adminH)).json();
+    assert.equal(forb.code, 403);
+
+    // 绑定 g1 后 admin_a 可读
+    const bind = await (await post(`/api/admin/activities/${act1}/groups/${g.data.group_id}`, {}, rootH)).json();
+    assert.equal(bind.code, 0);
+    const det = await (await get(`/api/admin/activities/${act1}`, adminH)).json();
+    assert.equal(det.code, 0);
+    assert.equal(det.data.groups.length, 1);
+
+    // admin_a 建表单 + 字段；冻结字段修改 → 409
+    const form = await (await post(`/api/admin/activities/${act1}/forms`, { name: '报名表' }, adminH)).json();
+    assert.equal(form.code, 0);
+    const field = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'student_name', field_label: '姓名', field_type: 0 }, adminH)).json();
+    assert.equal(field.code, 0);
+    const frozen = await (await put(`/api/admin/fields/${field.data.field_id}`, { field_key: 'hack' }, adminH)).json();
+    assert.equal(frozen.code, 409);
+
+    // 活动配置（批量）
+    const cfg = await (await put(`/api/admin/activities/${act1}/config`, { items: [{ key: 'venue_name', value: 'A 厅' }] }, adminH)).json();
+    assert.equal(cfg.code, 0);
+    const cfgList = await (await get(`/api/admin/activities/${act1}/config`, adminH)).json();
+    assert.equal(cfgList.code, 0);
+    assert.equal(cfgList.data.items.length, 1);
+
+    // 模板：创建 → 套用
+    const tpl = await (await post('/api/admin/templates', { name: 'Tpl', fields_json: '[]' }, rootH)).json();
+    assert.equal(tpl.code, 0);
+    const applied = await (await post(`/api/admin/templates/${tpl.data.template_id}/apply`, { activity_id: act1 }, adminH)).json();
+    assert.equal(applied.code, 0);
+
+    // 审计仅超管；活动管理员 → 403
+    const audit = await (await get('/api/admin/audit-logs', rootH)).json();
+    assert.equal(audit.code, 0);
+    assert.ok(audit.data.total >= 6);
+    assert.equal((await get('/api/admin/audit-logs', adminH)).status, 403);
+
+    // 报名端公开读：草稿不可见
+    const pub0 = await (await get('/api/activities')).json();
+    assert.equal(pub0.code, 0);
+    assert.equal(pub0.data.items.length, 0);
+
+    // 发布（0→1）后公开可见；已发布活动不可删 → 409
+    const pubAct = await (await put(`/api/admin/activities/${act1}`, { status: 1 }, rootH)).json();
+    assert.equal(pubAct.code, 0);
+    const pub1 = await (await get('/api/activities')).json();
+    assert.equal(pub1.code, 0);
+    assert.equal(pub1.data.items.length, 1);
+    const pubDetail = await (await get(`/api/activities/${act1}`)).json();
+    assert.equal(pubDetail.code, 0);
+    assert.ok(pubDetail.data.name === 'Seminar 2026');
+    const del409 = await (await del(`/api/admin/activities/${act1}`, rootH)).json();
+    assert.equal(del409.code, 409);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(tmp, { recursive: true, force: true });

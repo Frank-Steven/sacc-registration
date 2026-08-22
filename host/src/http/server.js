@@ -48,6 +48,37 @@ async function readJsonBody(req) {
   }
 }
 
+// 路由 pattern 编译：支持 RegExp（M1 原有）与字符串路径（含 :param，M2 起）
+// 返回 { exec(pathname) -> params|null }；RegExp 无命名参数，命中返回 {}。
+function compilePattern(pattern) {
+  if (pattern instanceof RegExp) {
+    return { exec: (pathname) => (pattern.test(pathname) ? {} : null) };
+  }
+  const names = [];
+  const src = pattern
+    .split('/')
+    .map((seg) => {
+      if (seg.startsWith(':')) {
+        names.push(seg.slice(1));
+        return '([^/]+)';
+      }
+      return seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('/');
+  const re = new RegExp(`^${src}$`);
+  return {
+    exec: (pathname) => {
+      const m = re.exec(pathname);
+      if (!m) return null;
+      const params = {};
+      names.forEach((name, i) => {
+        params[name] = decodeURIComponent(m[i + 1]);
+      });
+      return params;
+    },
+  };
+}
+
 // 静态资源托管（前端构建产物，SPA 回退到 index.html）
 function serveStatic(req, res, url, dist) {
   if (!fs.existsSync(dist)) {
@@ -73,6 +104,7 @@ function serveStatic(req, res, url, dist) {
 }
 
 export function createServer({ runtime, routes, frontendDist, logger }) {
+  const compiledRoutes = routes.map((r) => ({ ...r, match: compilePattern(r.pattern) }));
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -82,12 +114,15 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
         if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
           body = await readJsonBody(req);
         }
-        const route = routes.find((r) => r.method === req.method && r.pattern.test(url.pathname));
+        let params = null;
+        const route = compiledRoutes.find(
+          (r) => r.method === req.method && (params = r.match.exec(url.pathname)),
+        );
         if (!route) {
           sendJson(res, 404, { code: Errors.NOT_FOUND, message: 'not found' });
           return;
         }
-        const out = await route.handler({ query: url.searchParams, body, headers: req.headers });
+        const out = await route.handler({ query: url.searchParams, body, headers: req.headers, params });
         sendJson(res, httpStatusFor(out.code), out);
         return;
       }

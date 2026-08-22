@@ -210,6 +210,305 @@ int main() {
     std::remove(auth_path.c_str());
   }
 
+  // ============ 配置层（M2）：活动 / 分组 / 表单字段 / 模板 / 配置 / 授权 / 审计 ============
+  {
+    const std::string cfg_path =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/sacc_cfg_test.db";
+    std::remove(cfg_path.c_str());
+
+    sacc::Db cdb;
+    CHECK(cdb.open(cfg_path) == SQLITE_OK);
+    {
+      std::ifstream f(std::string(SACC_MIGRATIONS_DIR) + "/0001_init.sql");
+      std::stringstream ss;
+      ss << f.rdbuf();
+      CHECK(cdb.migrate(ss.str(), 1) == SQLITE_OK);
+      std::ifstream f2(std::string(SACC_MIGRATIONS_DIR) + "/0002_seed_roles.sql");
+      std::stringstream ss2;
+      ss2 << f2.rdbuf();
+      CHECK(cdb.migrate(ss2.str(), 2) == SQLITE_OK);
+    }
+
+    // 注册五个用户：root(超管引导) / admin_a / admin_b / reviewer / outsider
+    auto reg = [&](const char* u) -> std::int64_t {
+      json rr = invoke(cdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
+                                        R"(","password":"secret1234","name":")" + u + R"("}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["uid"].get<std::int64_t>();
+    };
+    const std::int64_t root_uid = reg("root");
+    const std::int64_t admin_a_uid = reg("admin_a");
+    const std::int64_t admin_b_uid = reg("admin_b");
+    const std::int64_t reviewer_uid = reg("reviewer");
+    const std::int64_t outsider_uid = reg("outsider");
+    // 引导超管（首个超管直接写 user_role，后续经 grant）
+    CHECK(cdb.execParams("INSERT INTO user_role (uid, role_id, group_id) VALUES (?, 1, NULL);",
+                         nlohmann::json::array({root_uid})) == SQLITE_OK);
+
+    // 分组树：g1 -> g1a；g2
+    auto mk_group = [&](const char* name, std::int64_t parent) -> std::int64_t {
+      json rr = invoke(cdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(root_uid) +
+                            R"(,"name":")" + name + R"(","parent_id":)" + std::to_string(parent) +
+                            R"(}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["group_id"].get<std::int64_t>();
+    };
+    const std::int64_t g1 = mk_group("Group1", 0);
+    const std::int64_t g1a = mk_group("Group1A", g1);
+    const std::int64_t g2 = mk_group("Group2", 0);
+
+    // 非超管不能建分组
+    r = invoke(cdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(admin_a_uid) +
+                      R"(,"name":"x"}})");
+    CHECK(r["code"] == 403);
+    // 移动到自身子树 → 409
+    r = invoke(cdb, R"({"op":"group.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"group_id":)" + std::to_string(g1) + R"(,"parent_id":)" +
+                      std::to_string(g1a) + R"(}})");
+    CHECK(r["code"] == 409);
+    // 删除有子分组的组 → 409
+    r = invoke(cdb, R"({"op":"group.delete","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"group_id":)" + std::to_string(g1) + R"(}})");
+    CHECK(r["code"] == 409);
+
+    // 授权：admin_a→role2(g1 含子树)；admin_b→role2(g2)；reviewer→role3(g1)
+    auto grant = [&](std::int64_t target, int role_id, std::int64_t group_id) {
+      json rr = invoke(cdb, R"({"op":"user_role.grant","args":{"uid":)" + std::to_string(root_uid) +
+                              R"(,"target_uid":)" + std::to_string(target) + R"(,"role_id":)" +
+                              std::to_string(role_id) + R"(,"group_id":)" + std::to_string(group_id) +
+                              R"(}})");
+      CHECK(rr["code"] == 0);
+    };
+    grant(admin_a_uid, 2, g1);
+    grant(admin_b_uid, 2, g2);
+    grant(reviewer_uid, 3, g1);
+    // 非超管授权 → 403
+    r = invoke(cdb, R"({"op":"user_role.grant","args":{"uid":)" + std::to_string(admin_a_uid) +
+                      R"(,"target_uid":)" + std::to_string(outsider_uid) + R"(,"role_id":3}})");
+    CHECK(r["code"] == 403);
+
+    // 活动：root 建 act1（后续绑定 g1/g2）；admin_b 建 act2（绑定 g2）
+    std::int64_t act1 = 0, act2 = 0, act_draft = 0;
+    {
+      json rr = invoke(cdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
+                             R"(,"name":"Seminar 2026","activity_type":0,"need_review":true}})");
+      CHECK(rr["code"] == 0);
+      act1 = rr["data"]["activity_id"].get<std::int64_t>();
+      // 活动管理员必须绑定授权分组
+      rr = invoke(cdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(admin_a_uid) +
+                         R"(,"name":"NoGroup","group_ids":[]}})");
+      CHECK(rr["code"] == 422);
+    }
+    CHECK(invoke(cdb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root_uid) +
+                         R"(,"activity_id":)" + std::to_string(act1) + R"(,"group_id":)" +
+                         std::to_string(g1) + R"(}})")["code"] == 0);
+    CHECK(invoke(cdb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root_uid) +
+                         R"(,"activity_id":)" + std::to_string(act1) + R"(,"group_id":)" +
+                         std::to_string(g2) + R"(}})")["code"] == 0);
+
+    // 权限：outsider 不可见；admin_a（g1 范围）可见 act1
+    r = invoke(cdb, R"({"op":"activity.detail","args":{"uid":)" + std::to_string(outsider_uid) +
+                      R"(,"activity_id":)" + std::to_string(act1) + R"(}})");
+    CHECK(r["code"] == 403);
+    r = invoke(cdb, R"({"op":"activity.detail","args":{"uid":)" + std::to_string(admin_a_uid) +
+                      R"(,"activity_id":)" + std::to_string(act1) + R"(}})");
+    CHECK(r["code"] == 0);
+
+    // 状态流转：0→1 发布；1→3 非法 409；1→2 截止；2→3 结束
+    auto upd = [&](std::int64_t uid, std::int64_t act, int status) -> json {
+      return invoke(cdb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(uid) +
+                            R"(,"activity_id":)" + std::to_string(act) + R"(,"status":)" +
+                            std::to_string(status) + R"(}})");
+    };
+    CHECK(upd(root_uid, act1, 1)["code"] == 0);
+    CHECK(upd(root_uid, act1, 3)["code"] == 409);
+    CHECK(upd(root_uid, act1, 2)["code"] == 0);
+    CHECK(upd(root_uid, act1, 3)["code"] == 0);
+
+    // 删除限制：已发布不可删（409）；草稿可删
+    r = invoke(cdb, R"({"op":"activity.delete","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act1) + R"(}})");
+    CHECK(r["code"] == 409);
+    {
+      json rr = invoke(cdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
+                             R"(,"name":"Draft"}})");
+      act_draft = rr["data"]["activity_id"].get<std::int64_t>();
+    }
+    r = invoke(cdb, R"({"op":"activity.delete","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act_draft) + R"(}})");
+    CHECK(r["code"] == 0);
+
+    // 范围：admin_b 建 act2 绑 g2；admin_a（g1 范围）不可见 act2
+    {
+      json rr = invoke(cdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(admin_b_uid) +
+                             R"(,"name":"B-only","group_ids":[)" + std::to_string(g2) + R"(]}})");
+      CHECK(rr["code"] == 0);
+      act2 = rr["data"]["activity_id"].get<std::int64_t>();
+    }
+    r = invoke(cdb, R"({"op":"activity.list","args":{"uid":)" + std::to_string(admin_a_uid) + R"(}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] >= 1);
+    r = invoke(cdb, R"({"op":"activity.detail","args":{"uid":)" + std::to_string(admin_a_uid) +
+                      R"(,"activity_id":)" + std::to_string(act2) + R"(}})");
+    CHECK(r["code"] == 403);
+
+    // ===== 表单 / 字段（act1 上建 form1） =====
+    std::int64_t form1 = 0, field_name = 0, field_gender = 0;
+    {
+      json rr = invoke(cdb, R"({"op":"form.create","args":{"uid":)" + std::to_string(root_uid) +
+                             R"(,"activity_id":)" + std::to_string(act1) + R"(,"name":"基本信息"}})");
+      CHECK(rr["code"] == 0);
+      form1 = rr["data"]["form_id"].get<std::int64_t>();
+      rr = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(root_uid) +
+                         R"(,"form_id":)" + std::to_string(form1) +
+                         R"(,"field_key":"student_name","field_label":"姓名","field_type":0,"is_required":true}})");
+      CHECK(rr["code"] == 0);
+      field_name = rr["data"]["field_id"].get<std::int64_t>();
+      rr = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(root_uid) +
+                         R"(,"form_id":)" + std::to_string(form1) +
+                         R"(,"field_key":"gender","field_label":"性别","field_type":2,"options":"[\"男\",\"女\"]"}})");
+      CHECK(rr["code"] == 0);
+      field_gender = rr["data"]["field_id"].get<std::int64_t>();
+    }
+    // 非法 key / 缺 options / 重复 key
+    r = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"form_id":)" + std::to_string(form1) +
+                      R"(,"field_key":"Bad Key","field_label":"x","field_type":0}})");
+    CHECK(r["code"] == 422);
+    r = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"form_id":)" + std::to_string(form1) +
+                      R"(,"field_key":"major","field_label":"专业","field_type":2}})");
+    CHECK(r["code"] == 422);
+    r = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"form_id":)" + std::to_string(form1) +
+                      R"(,"field_key":"gender","field_label":"x","field_type":2,"options":"[\"a\"]"}})");
+    CHECK(r["code"] == 409);
+    // 冻结项：改 key / 改 type → 409；可改 label
+    r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"field_id":)" + std::to_string(field_name) + R"(,"field_key":"name2"}})");
+    CHECK(r["code"] == 409);
+    r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"field_id":)" + std::to_string(field_name) + R"(,"field_type":1}})");
+    CHECK(r["code"] == 409);
+    r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"field_id":)" + std::to_string(field_name) + R"(,"field_label":"学生姓名"}})");
+    CHECK(r["code"] == 0);
+    // 草稿期 options 可自由修改
+    r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"field_id":)" + std::to_string(field_gender) +
+                      R"(,"options":"[\"男\",\"女\",\"保密\"]"}})");
+    CHECK(r["code"] == 0);
+    // form 有字段不可删；删光字段后可删表单
+    r = invoke(cdb, R"({"op":"form.delete","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"form_id":)" + std::to_string(form1) + R"(}})");
+    CHECK(r["code"] == 409);
+    CHECK(invoke(cdb, R"({"op":"form_field.delete","args":{"uid":)" + std::to_string(root_uid) +
+                        R"(,"field_id":)" + std::to_string(field_gender) + R"(}})")["code"] == 0);
+    CHECK(invoke(cdb, R"({"op":"form_field.delete","args":{"uid":)" + std::to_string(root_uid) +
+                        R"(,"field_id":)" + std::to_string(field_name) + R"(}})")["code"] == 0);
+    r = invoke(cdb, R"({"op":"form.delete","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"form_id":)" + std::to_string(form1) + R"(}})");
+    CHECK(r["code"] == 0);
+
+    // ===== 进行中 options 仅追加（act2 上建 form2 + grade 字段） =====
+    {
+      json rr = invoke(cdb, R"({"op":"form.create","args":{"uid":)" + std::to_string(admin_b_uid) +
+                             R"(,"activity_id":)" + std::to_string(act2) + R"(,"name":"报名表"}})");
+      const std::int64_t f2 = rr["data"]["form_id"].get<std::int64_t>();
+      rr = invoke(cdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(admin_b_uid) +
+                         R"(,"form_id":)" + std::to_string(f2) +
+                         R"(,"field_key":"grade","field_label":"年级","field_type":3,"options":"[\"一\",\"二\"]"}})");
+      const std::int64_t fld = rr["data"]["field_id"].get<std::int64_t>();
+      CHECK(upd(admin_b_uid, act2, 1)["code"] == 0);  // 发布
+      r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(admin_b_uid) +
+                        R"(,"field_id":)" + std::to_string(fld) + R"(,"options":"[\"一\"]"}})");
+      CHECK(r["code"] == 409);
+      r = invoke(cdb, R"({"op":"form_field.update","args":{"uid":)" + std::to_string(admin_b_uid) +
+                        R"(,"field_id":)" + std::to_string(fld) +
+                        R"(,"options":"[\"一\",\"二\",\"三\"]"}})");
+      CHECK(r["code"] == 0);
+    }
+
+    // ===== 模板：从 act2 生成快照 → 套用到 act1 =====
+    std::int64_t tpl = 0;
+    {
+      json rr = invoke(cdb, R"({"op":"form_template.save_from_activity","args":{"uid":)" +
+                             std::to_string(root_uid) + R"(,"activity_id":)" +
+                             std::to_string(act2) + R"(,"name":"标准模板"}})");
+      CHECK(rr["code"] == 0);
+      tpl = rr["data"]["template_id"].get<std::int64_t>();
+    }
+    r = invoke(cdb, R"({"op":"form_template.apply","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"template_id":)" + std::to_string(tpl) + R"(,"activity_id":)" +
+                      std::to_string(act1) + R"(}})");
+    CHECK(r["code"] == 0);
+    // outsider 无角色套模板 → 403
+    r = invoke(cdb, R"({"op":"form_template.apply","args":{"uid":)" + std::to_string(outsider_uid) +
+                      R"(,"template_id":)" + std::to_string(tpl) + R"(,"activity_id":)" +
+                      std::to_string(act2) + R"(}})");
+    CHECK(r["code"] == 403);
+
+    // ===== 配置：登记 key 合法；未登记/类型不符 → 422；system_config 仅超管 =====
+    r = invoke(cdb, R"({"op":"activity_config.set","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act2) +
+                      R"(,"items":[{"key":"venue_name","value":"体育馆"},{"key":"checkin_mode","value":1}]}})");
+    CHECK(r["code"] == 0);
+    r = invoke(cdb, R"({"op":"activity_config.set","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act2) + R"(,"key":"nope","value":"x"}})");
+    CHECK(r["code"] == 422);
+    r = invoke(cdb, R"({"op":"activity_config.set","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act2) + R"(,"key":"checkin_mode","value":9}})");
+    CHECK(r["code"] == 422);
+    r = invoke(cdb, R"({"op":"activity_config.get","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act2) + R"(,"key":"venue_name"}})");
+    CHECK(r["code"] == 0 && r["data"]["value"] == "体育馆");
+    CHECK(invoke(cdb, R"({"op":"system_config.set","args":{"uid":)" + std::to_string(root_uid) +
+                        R"(,"key":"site_name","value":"SACC"}})")["code"] == 0);
+    r = invoke(cdb, R"({"op":"system_config.set","args":{"uid":)" + std::to_string(admin_a_uid) +
+                      R"(,"key":"site_name","value":"hack"}})");
+    CHECK(r["code"] == 403);
+
+    // ===== 授权 / 审计 =====
+    r = invoke(cdb, R"({"op":"user_role.revoke","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"target_uid":)" + std::to_string(root_uid) + R"(,"role_id":1}})");
+    CHECK(r["code"] == 409);  // 最后一个超管不可撤销
+    r = invoke(cdb, R"({"op":"user_role.revoke","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"target_uid":)" + std::to_string(reviewer_uid) + R"(,"role_id":3}})");
+    CHECK(r["code"] == 0);
+    r = invoke(cdb, R"({"op":"audit_log.list","args":{"uid":)" + std::to_string(root_uid) + R"(}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] >= 1);
+    r = invoke(cdb, R"({"op":"audit_log.list","args":{"uid":)" + std::to_string(admin_a_uid) + R"(}})");
+    CHECK(r["code"] == 403);
+
+    // ===== db.backup：在线备份可独立打开读到数据 =====
+    {
+      const std::string backup_path =
+          std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
+          "/sacc_cfg_backup.db";
+      std::remove(backup_path.c_str());
+      r = invoke(cdb, R"({"op":"db.backup","args":{"path":")" + backup_path + R"("}})");
+      CHECK(r["code"] == 0);
+      sacc::Db bdb;
+      CHECK(bdb.open(backup_path) == SQLITE_OK);
+      json brows;
+      std::string berr;
+      CHECK(bdb.query("SELECT name FROM activity WHERE is_deleted = 0;", nullptr, brows, berr) ==
+            SQLITE_OK);
+      CHECK(brows.size() >= 1);
+      bdb.close();
+      std::remove(backup_path.c_str());
+    }
+
+    // ===== 报名端公开视图：进行中可见，草稿/未发布不可见 =====
+    r = invoke(cdb, R"({"op":"activity.public_list"})");
+    CHECK(r["code"] == 0);
+    r = invoke(cdb, R"({"op":"activity.public_detail","args":{"activity_id":)" +
+                      std::to_string(act_draft) + R"(}})");
+    CHECK(r["code"] == 404);
+
+    cdb.close();
+    std::remove(cfg_path.c_str());
+  }
+
   std::remove(db_path.c_str());
 
   if (failures == 0) {

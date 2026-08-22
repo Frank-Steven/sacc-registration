@@ -184,6 +184,35 @@ int Db::query(const std::string& sql, const nlohmann::json& params, nlohmann::js
 
 int Db::lastChanges() const { return db_ ? sqlite3_changes(db_) : 0; }
 
+// 在线备份：sqlite3_backup 复制主库到目标文件（WAL 一致），供 db.backup op 使用
+int Db::backupTo(const std::string& dest_path) {
+  if (!db_) return SQLITE_MISUSE;
+  sqlite3* dest_db = nullptr;
+  int rc = sqlite3_open_v2(dest_path.c_str(), &dest_db,
+                           SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr);
+  if (rc != SQLITE_OK) {
+    if (dest_db) sqlite3_close(dest_db);
+    return rc;
+  }
+  sqlite3_backup* bk = sqlite3_backup_init(dest_db, "main", db_, "main");
+  if (!bk) {
+    rc = sqlite3_errcode(dest_db);
+    sqlite3_close(dest_db);
+    return rc;
+  }
+  rc = sqlite3_backup_step(bk, -1);
+  if (rc != SQLITE_DONE) {
+    const int err = sqlite3_errcode(dest_db);
+    sqlite3_backup_finish(bk);
+    sqlite3_close(dest_db);
+    errmsg_ = sqlite3_errstr(err);
+    return err;
+  }
+  rc = sqlite3_backup_finish(bk);
+  sqlite3_close(dest_db);
+  return rc;
+}
+
 std::string Db::lastError() const {
   if (!errmsg_.empty()) return errmsg_;
   return db_ ? sqlite3_errmsg(db_) : "db not open";

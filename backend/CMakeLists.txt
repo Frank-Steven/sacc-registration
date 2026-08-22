@@ -30,6 +30,13 @@ add_library(sacc_core STATIC
   src/core/dispatch.cpp
   src/crypto/kdf.cpp
   src/user/auth.cpp
+  src/config/authz.cpp
+  src/config/activity.cpp
+  src/config/group.cpp
+  src/config/form.cpp
+  src/config/template.cpp
+  src/config/config.cpp
+  src/config/role.cpp
   third_party/sqlite/sqlite3.c
 )
 target_include_directories(sacc_core PUBLIC ${SACC_INCLUDE_DIRS})

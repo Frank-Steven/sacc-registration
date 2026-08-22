@@ -5,6 +5,7 @@ import { config, ROOT } from './config.js';
 import { logger } from './logger.js';
 import { WasmRuntime } from './wasm-runtime/runtime.js';
 import { runMigrations } from './db/migrate.js';
+import { scheduleDailyBackup } from './task/backup.js';
 import { createRoutes } from './http/routes.js';
 import { createServer } from './http/server.js';
 
@@ -23,11 +24,35 @@ async function main() {
   const runtime = await WasmRuntime.load(config.wasmPath, ROOT);
   logger.info('wasm module loaded', { version: runtime.version });
 
-  // 2. 数据库迁移（宿主启动时自动初始化）
-  const userVersion = await runMigrations(runtime, { root: ROOT, dbPath: config.dbPath });
+  // 2. 数据库迁移（宿主启动时自动初始化；有待执行迁移时自动备份）
+  const userVersion = await runMigrations(runtime, {
+    root: ROOT,
+    dbPath: config.dbPath,
+    wasmPath: config.wasmPath,
+  });
   logger.info('database ready', { user_version: userVersion, path: config.dbPath });
 
-  // 3. HTTP 服务
+  // 3. 启动自检（disaster-recovery.md 四）：integrity_check + user_version 与迁移目录一致
+  const integ = await runtime.invoke({ op: 'db.query', args: { sql: 'PRAGMA integrity_check;' } });
+  const integRow = integ.data?.rows?.[0];
+  if (integ.code !== 0 || !integRow || integRow.integrity_check !== 'ok') {
+    throw new Error(`startup self-check failed: ${integ.message || 'integrity_check != ok'}`);
+  }
+  const maxVersion = fs
+    .readdirSync(path.join(ROOT, 'db', 'migrations'))
+    .filter((f) => /^\d{4}_.+\.sql$/.test(f))
+    .map((f) => Number(f.slice(0, 4)))
+    .sort((a, b) => a - b)
+    .at(-1) ?? 0;
+  if (userVersion !== maxVersion) {
+    throw new Error(`startup self-check failed: user_version ${userVersion} != migrations ${maxVersion}`);
+  }
+  logger.info('startup self-check passed', { user_version: userVersion, integrity: 'ok' });
+
+  // 4. 每日备份任务（启动即做一次；错误仅告警不阻断服务）
+  scheduleDailyBackup({ runtime, wasmPath: config.wasmPath, dbPath: config.dbPath });
+
+  // 5. HTTP 服务
   const server = createServer({
     runtime,
     routes: createRoutes({ runtime, config }),
