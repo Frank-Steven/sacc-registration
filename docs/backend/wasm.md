@@ -57,6 +57,8 @@ flowchart LR
 
 - 内存约定：`wasm_alloc` 分配宿主传入 buffer，结果写入共享线性内存，宿主读取后 `wasm_free` 释放。
 
+> **实现说明（M0）**：当前模块仅导出 `wasm_alloc` / `wasm_free` / `wasm_version` / `wasm_invoke` 四个函数。`wasm_invoke` 为通用 JSON 分发入口（入参 `{ "op": "db.migrate", "args": {...} }`，出参 `{ code, data?, message? }`），上表各业务函数作为 `op` 值在模块内分发实现，业务落地时按需逐个补齐（M1+）。
+
 ## 五、SQLite 与并发
 
 - **单写者模型**：wasm 模块默认单线程，宿主以互斥锁 / 操作队列**串行化所有写调用**。
