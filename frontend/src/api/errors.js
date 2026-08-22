@@ -8,6 +8,7 @@ export const Errors = Object.freeze({
   NOT_FOUND: 404,
   CONFLICT: 409,
   VALIDATION: 422,
+  PAYLOAD_TOO_LARGE: 413,
 
   UNKNOWN_OP: 1001,
   INVALID_REQUEST: 1002,
@@ -22,6 +23,7 @@ export const ErrorMessage = Object.freeze({
   [Errors.NOT_FOUND]: '资源不存在',
   [Errors.CONFLICT]: '名额已满或状态冲突',
   [Errors.VALIDATION]: '参数校验失败',
+  [Errors.PAYLOAD_TOO_LARGE]: '请求体过大',
   [Errors.UNKNOWN_OP]: '不支持的操作',
   [Errors.DB_ERROR]: '数据错误',
 });

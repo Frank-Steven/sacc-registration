@@ -20,9 +20,25 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+// 请求体上限（1MB）：防未认证大请求耗尽内存
+const MAX_BODY_BYTES = 1024 * 1024;
+
+class BodyTooLargeError extends Error {}
+
 async function readJsonBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  let tooLarge = false;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) {
+      // 超限后停止累积、继续读完剩余数据（不提前销毁流，保证 413 响应可达）
+      tooLarge = true;
+      continue;
+    }
+    chunks.push(chunk);
+  }
+  if (tooLarge) throw new BodyTooLargeError();
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {};
   try {
@@ -78,6 +94,10 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
 
       serveStatic(req, res, url, frontendDist);
     } catch (err) {
+      if (err instanceof BodyTooLargeError) {
+        sendJson(res, 413, { code: Errors.PAYLOAD_TOO_LARGE, message: '请求体过大' });
+        return;
+      }
       logger.error('request failed', { err: err.message });
       sendJson(res, 500, { code: Errors.INTERNAL, message: 'internal error' });
     }

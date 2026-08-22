@@ -4,6 +4,13 @@ import crypto from 'node:crypto';
 const b64url = (buf) =>
   Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+// 恒定时间字符串比较（防签名时序侧信道）；长度不同直接判不等
+const safeEqual = (a, b) => {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+};
+
 // 签发：payload 仅含 uid / username / iat / exp
 export function signJwt(payload, secret, ttlSeconds = 7 * 24 * 3600) {
   const header = { alg: 'HS256', typ: 'JWT' };
@@ -22,7 +29,7 @@ export function verifyJwt(token, secret) {
   if (parts.length !== 3) return null;
   const [h, p, sig] = parts;
   const expect = crypto.createHmac('sha256', secret).update(`${h}.${p}`).digest('base64');
-  if (b64url(expect) !== sig) return null;
+  if (!safeEqual(b64url(expect), sig)) return null;
   try {
     const payload = JSON.parse(Buffer.from(p, 'base64').toString('utf8'));
     if (!payload.exp || payload.exp <= Math.floor(Date.now() / 1000)) return null;

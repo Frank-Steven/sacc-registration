@@ -192,20 +192,38 @@ nlohmann::json auth_login(Db& db, const nlohmann::json& args) {
       "WHERE username = ?;",
       nlohmann::json::array({username}), rows, qerr);
   if (rc != SQLITE_OK) return err(kDbError, "query failed: " + qerr);
-  if (rows.empty()) return err(kUnauthorized, "用户名或密码错误");
+  if (rows.empty()) {
+    // 防枚举：与用户存在时耗时对齐（执行一次等价 PBKDF2），响应仍为 401
+    unsigned char h[32];
+    static constexpr unsigned char kDummySalt[kSaltLen] = {
+        0x5a, 0xcc, 0x17, 0x3f, 0x9b, 0x21, 0x4e, 0xd0,
+        0x8c, 0x66, 0x02, 0xb7, 0xe4, 0x15, 0x8d, 0x71,
+    };
+    pbkdf2_sha256(reinterpret_cast<const unsigned char*>(password.data()), password.size(),
+                  kDummySalt, kSaltLen, kPbkdf2Iterations, h);
+    return err(kUnauthorized, "用户名或密码错误");
+  }
 
   const nlohmann::json& row = rows[0];
   const std::int64_t uid = row.value("uid", 0);
   const int status = row.value("status", 0);
-  const int fail_count = row.value("login_fail_count", 0);
+  int fail_count = row.value("login_fail_count", 0);
   // lock_until 可空（NULL=未锁定），需先判空再取数（value() 对 null 会抛异常）
   const nlohmann::json& lu = row["lock_until"];
   const std::int64_t lock_until = lu.is_null() ? 0 : lu.get<std::int64_t>();
   const std::int64_t now = now_ts();
 
   if (status == 1) return err(kForbidden, "账号已禁用");
-  if (lock_until > 0 && lock_until > now) {
-    return err(kForbidden, "失败次数过多，账号已锁定，请稍后再试");
+  if (lock_until > 0) {
+    if (lock_until > now) {
+      return err(kForbidden, "失败次数过多，账号已锁定，请稍后再试");
+    }
+    // 锁定已到期：清零计数再放行，恢复"连续失败 5 次"阈值语义
+    if (db.execParams("UPDATE account SET login_fail_count = 0, lock_until = NULL WHERE uid = ?;",
+                      nlohmann::json::array({uid})) != SQLITE_OK) {
+      return err(kDbError, "update failed: " + db.lastError());
+    }
+    fail_count = 0;
   }
 
   if (verifyPassword(password, row.value("salt", ""), row.value("password_hash", ""))) {

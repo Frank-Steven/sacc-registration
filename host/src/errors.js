@@ -8,6 +8,7 @@ export const Errors = Object.freeze({
   NOT_FOUND: 404,
   CONFLICT: 409, // 名额满 / 重复报名等
   VALIDATION: 422, // 参数校验失败
+  PAYLOAD_TOO_LARGE: 413, // 请求体超限
 
   // wasm 模块侧错误
   UNKNOWN_OP: 1001,
@@ -30,6 +31,8 @@ export function httpStatusFor(code) {
       return 409;
     case Errors.VALIDATION:
       return 422;
+    case Errors.PAYLOAD_TOO_LARGE:
+      return 413;
     case Errors.INVALID_REQUEST:
     case Errors.UNKNOWN_OP:
       return 400;

@@ -167,6 +167,16 @@ int main() {
     r = invoke(adb, R"({"op":"auth.login","args":{"username":"alice","password":"secret1234"}})");
     CHECK(r["code"] == 403);
 
+    // 锁定到期（手动置过期）：计数清零放行，1 次错误不重新锁定，正确密码可登录
+    {
+      CHECK(adb.execParams("UPDATE account SET lock_until = ? WHERE uid = ?;",
+                           nlohmann::json::array({sacc::now_ts() - 1, alice_uid})) == SQLITE_OK);
+      r = invoke(adb, R"({"op":"auth.login","args":{"username":"alice","password":"wrongpass1"}})");
+      CHECK(r["code"] == 401);
+      r = invoke(adb, R"({"op":"auth.login","args":{"username":"alice","password":"secret1234"}})");
+      CHECK(r["code"] == 0);
+    }
+
     // me：存在 / 不存在
     r = invoke(adb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(alice_uid) + R"(}})");
     CHECK(r["code"] == 0 && r["data"]["email"] == "alice@example.com");

@@ -204,3 +204,28 @@ test('auth HTTP: 注册签发 token → me 鉴权 → 未登录 / 假 token 401'
   }
 });
 
+test('http: 超限请求体返回 413（防内存耗尽 DoS）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-test-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'alice', password: 'x'.repeat(2 * 1024 * 1024) }),
+    });
+    assert.equal(res.status, 413);
+    const json = await res.json();
+    assert.equal(json.code, 413);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
