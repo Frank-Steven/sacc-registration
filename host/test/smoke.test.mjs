@@ -47,7 +47,7 @@ test('migrations: 空库初始化为最新版本并建全部表', async () => {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 3);
+    assert.equal(version, 4);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
@@ -68,8 +68,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 3);
-    assert.equal(v2, 3);
+    assert.equal(v1, 4);
+    assert.equal(v2, 4);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -567,6 +567,203 @@ test('http M3: 报名 / 候补递补 / 审核 / 通知 / 订阅 / 签到 / 提�
       args: { sql: 'SELECT COUNT(*) AS c FROM notification WHERE type = 2;' },
     });
     assert.ok(type2.data.rows[0].c >= 3);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http M4: 导出（分块/CSV）与统计（看板/趋势/跨活动）全链路', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m4-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+
+  try {
+    // 注册：root 超管 / admin_a（role2）/ user01、user02 报名 / user03（role3 只读）/ outsider
+    const regRoot = await (await post('/api/auth/register', { username: 'root', password: 'secret1234' })).json();
+    const rootUid = regRoot.data.user.uid;
+    const rootH = { authorization: `Bearer ${regRoot.data.token}` };
+    const regAdmin = await (await post('/api/auth/register', { username: 'admin_a', password: 'secret1234' })).json();
+    const adminUid = regAdmin.data.user.uid;
+    const adminH = { authorization: `Bearer ${regAdmin.data.token}` };
+    const regU1 = await (await post('/api/auth/register', { username: 'user01', password: 'secret1234', name: '张三' })).json();
+    const u1H = { authorization: `Bearer ${regU1.data.token}` };
+    const regU2 = await (await post('/api/auth/register', { username: 'user02', password: 'secret1234', name: '李四,"好"' })).json();
+    const u2H = { authorization: `Bearer ${regU2.data.token}` };
+    const regU3 = await (await post('/api/auth/register', { username: 'user03', password: 'secret1234' })).json();
+    const u3H = { authorization: `Bearer ${regU3.data.token}` };
+    const regOut = await (await post('/api/auth/register', { username: 'outsider', password: 'secret1234' })).json();
+    const outH = { authorization: `Bearer ${regOut.data.token}` };
+
+    await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${rootUid}, 1, NULL);` },
+    });
+    const g = await (await post('/api/admin/groups', { name: 'M4Group' }, rootH)).json();
+    assert.equal(g.code, 0);
+    const gid = g.data.group_id;
+    // admin_a：role2 可写；user03：role3 只读（导出 403 / 统计 200，决策 2）
+    assert.equal((await (await post('/api/admin/roles/2/users', { target_uid: adminUid, group_id: gid }, rootH)).json()).code, 0);
+    assert.equal((await (await post('/api/admin/roles/3/users', { target_uid: regU3.data.user.uid, group_id: gid }, rootH)).json()).code, 0);
+
+    // 活动：need_review=false（提交即通过）max_slots=2，绑 g1 并发布
+    const now = Math.floor(Date.now() / 1000);
+    const act = await (await post('/api/admin/activities', {
+      name: 'M4 Expo',
+      need_review: false,
+      max_slots: 2,
+      start_time: now - 3600,
+      end_time: now + 86400,
+    }, rootH)).json();
+    assert.equal(act.code, 0);
+    const act1 = act.data.activity_id;
+    assert.equal((await (await post(`/api/admin/activities/${act1}/groups/${gid}`, {}, rootH)).json()).code, 0);
+    assert.equal((await (await put(`/api/admin/activities/${act1}`, { status: 1 }, rootH)).json()).code, 0);
+
+    // 表单 + 字段：姓名(文本) / 性别(单选) / 爱好(多选) / 隐藏列(is_visible=false)
+    const form = await (await post(`/api/admin/activities/${act1}/forms`, { name: '报名表' }, adminH)).json();
+    assert.equal(form.code, 0);
+    const fName = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'name_field', field_label: '姓名', field_type: 0, is_required: true }, adminH)).json();
+    assert.equal(fName.code, 0);
+    const fGen = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'gender', field_label: '性别', field_type: 2, options: '["男","女"]' }, adminH)).json();
+    assert.equal(fGen.code, 0);
+    const fHob = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'hobby', field_label: '爱好', field_type: 3, options: '["篮球","足球","羽毛球"]' }, adminH)).json();
+    assert.equal(fHob.code, 0);
+    const fHidden = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'hidden_f', field_label: '隐藏列', field_type: 0, is_visible: false }, adminH)).json();
+    assert.equal(fHidden.code, 0);
+
+    // user01 / user02 报名并提交（need_review=false → 已通过 status=2）
+    const submit = async (token, fields) => {
+      const r = await (await post(`/api/activities/${act1}/registration`, {}, token)).json();
+      assert.equal(r.code, 0);
+      assert.equal((await (await put(`/api/me/registrations/${r.data.registration_id}`, { fields, current_step: 1 }, token)).json()).code, 0);
+      return (await (await post(`/api/me/registrations/${r.data.registration_id}/submit`, {}, token)).json());
+    };
+    const s1 = await submit(u1H, [
+      { field_id: fName.data.field_id, value: '张三' },
+      { field_id: fGen.data.field_id, value: '男' },
+      { field_id: fHob.data.field_id, value: '["篮球","羽毛球"]' },
+    ]);
+    assert.equal(s1.code, 0);
+    assert.equal(s1.data.status, 2);
+    const s2 = await submit(u2H, [
+      { field_id: fName.data.field_id, value: '李四,"好"' },
+      { field_id: fGen.data.field_id, value: '女' },
+      { field_id: fHob.data.field_id, value: '["篮球"]' },
+    ]);
+    assert.equal(s2.code, 0);
+    assert.equal(s2.data.status, 2);
+
+    // ===== 分块导出（registration.export）=====
+    const exp = await (await get(`/api/admin/activities/${act1}/export?limit=100`, adminH)).json();
+    assert.equal(exp.code, 0);
+    assert.equal(exp.data.total, 2);
+    const keys = exp.data.columns.map((c) => c.key);
+    assert.ok(keys.includes('name_field') && keys.includes('gender') && keys.includes('hobby'), '可见动态列应在');
+    assert.ok(!keys.includes('hidden_f'), '隐藏字段不应出列');
+    assert.ok(keys.indexOf('registration_id') < keys.indexOf('name_field'), '固定列在动态列前');
+    const row1 = exp.data.rows.find((r) => r.fields.name_field === '张三');
+    assert.ok(row1, '张三行应在');
+    assert.equal(row1.fields.gender, '男');
+    assert.equal(row1.fields.hobby, '篮球;羽毛球');
+    assert.equal(exp.data.next_cursor, 0);
+
+    // 分块连续性（limit=1）：cursor 递进不重不漏
+    const p1 = await (await get(`/api/admin/activities/${act1}/export?limit=1`, adminH)).json();
+    assert.equal(p1.code, 0);
+    assert.equal(p1.data.rows.length, 1);
+    const c1 = p1.data.rows[0].registration_id;
+    assert.equal(p1.data.next_cursor, c1);
+    const p2 = await (await get(`/api/admin/activities/${act1}/export?limit=1&cursor=${c1}`, adminH)).json();
+    assert.equal(p2.code, 0);
+    assert.equal(p2.data.rows.length, 1);
+    assert.notEqual(p2.data.rows[0].registration_id, c1);
+    assert.equal(p2.data.next_cursor, 0);
+
+    // 筛选 keyword（user.name）；非法 cursor → 422
+    const kw = await (await get(`/api/admin/activities/${act1}/export?keyword=${encodeURIComponent('张三')}`, adminH)).json();
+    assert.equal(kw.code, 0);
+    assert.equal(kw.data.total, 1);
+    assert.equal((await (await get(`/api/admin/activities/${act1}/export?cursor=-1`, adminH)).json()).code, 422);
+
+    // ===== CSV 下载（registration.export_csv）：raw 内容 + Content-Disposition + BOM =====
+    const csvRes = await fetch(`${base}/api/admin/activities/${act1}/export.csv`, { headers: adminH });
+    assert.equal(csvRes.status, 200);
+    assert.match(csvRes.headers.get('content-type'), /^text\/csv/);
+    assert.match(csvRes.headers.get('content-disposition'), /attachment; filename="registrations_/);
+    // BOM 断言在字节层（TextDecoder 剥 BOM，text() 不可见）
+    const csvBuf = Buffer.from(await csvRes.arrayBuffer());
+    assert.ok(csvBuf.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf])), 'CSV 应带 UTF-8 BOM 字节');
+    const csv = csvBuf.toString('utf8').slice(1);
+    assert.ok(csv.includes('凭证号'), '应含表头');
+    assert.ok(csv.includes('篮球;羽毛球'), '多选标签分号连接');
+    assert.ok(csv.includes('"李四,""好"""'), 'RFC 4180 逗号/引号转义');
+    assert.ok(!csv.includes('隐藏列'), '隐藏字段不出列');
+
+    // ===== 看板统计（registration.stats）=====
+    const stats = await (await get(`/api/admin/activities/${act1}/stats`, adminH)).json();
+    assert.equal(stats.code, 0);
+    assert.equal(stats.data.capacity, 2);
+    assert.equal(stats.data.taken, 2);
+    assert.equal(stats.data.pending, 0);
+    assert.equal(stats.data.waitlist, 0);
+    assert.equal(stats.data.status_dist.find((s) => s.status === 2).count, 2);
+    const genderFd = stats.data.field_dist.find((fd) => fd.field_key === 'gender');
+    const hobbyFd = stats.data.field_dist.find((fd) => fd.field_key === 'hobby');
+    assert.ok(genderFd && hobbyFd, '字段分布应含单选/多选');
+    assert.equal(genderFd.items.find((i) => i.value === '男').count, 1);
+    assert.equal(genderFd.items.find((i) => i.value === '女').count, 1);
+    assert.equal(hobbyFd.items.find((i) => i.value === '篮球').count, 2);
+    assert.equal(hobbyFd.items.find((i) => i.value === '羽毛球').count, 1);
+
+    // ===== 每日趋势（registration.trend，7 天补 0）=====
+    const trend = await (await get(`/api/admin/activities/${act1}/trend?days=7`, adminH)).json();
+    assert.equal(trend.code, 0);
+    assert.equal(trend.data.items.length, 7);
+    const trendTotal = trend.data.items.reduce((a, it) => a + it.count, 0);
+    assert.equal(trendTotal, 2);
+
+    // ===== 跨活动统计（activity.stats，分组范围过滤）=====
+    const aStats = await (await get('/api/admin/activities/stats', adminH)).json();
+    assert.equal(aStats.code, 0);
+    assert.equal(aStats.data.total, 1, 'admin_a 范围仅 M4 Expo');
+    assert.equal(aStats.data.rows[0].name, 'M4 Expo');
+    assert.equal(aStats.data.rows[0].total, 2);
+    assert.ok((await (await get('/api/admin/activities/stats', rootH)).json()).data.total >= 1, '超管全范围');
+    assert.equal((await (await get('/api/admin/activities/stats?keyword=none', adminH)).json()).data.total, 0);
+
+    // ===== 权限（决策 2）：导出 manage / 统计 read；活动不存在 404 =====
+    assert.equal((await (await get(`/api/admin/activities/${act1}/export`, outH)).json()).code, 403);
+    assert.equal((await (await get(`/api/admin/activities/${act1}/export`, u3H)).json()).code, 403, 'role3 只读不可导出');
+    assert.equal((await (await get(`/api/admin/activities/${act1}/stats`, u3H)).json()).code, 0, 'role3 可读统计');
+    assert.equal((await (await get(`/api/admin/activities/${act1}/stats`, outH)).json()).code, 403);
+    assert.equal((await (await get('/api/admin/activities/stats', outH)).json()).code, 403);
+    assert.equal((await (await get('/api/admin/activities/999999/stats', adminH)).json()).code, 404);
+
+    // ===== 审计：导出动作各写一次（JSON 分块首块 + CSV）=====
+    const audit = await (await get('/api/admin/audit-logs', rootH)).json();
+    assert.equal(audit.code, 0);
+    const exportAudits = audit.data.items.filter((a) => a.action === 'export_registration');
+    assert.ok(exportAudits.length >= 2, `JSON+CSV 导出各写审计，实际 ${exportAudits.length}`);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(tmp, { recursive: true, force: true });

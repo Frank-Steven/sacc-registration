@@ -43,6 +43,7 @@ add_library(sacc_core STATIC
   src/data/checkin.cpp
   src/data/notification.cpp
   src/data/subscribe.cpp
+  src/data/export.cpp
   third_party/sqlite/sqlite3.c
 )
 target_include_directories(sacc_core PUBLIC ${SACC_INCLUDE_DIRS})

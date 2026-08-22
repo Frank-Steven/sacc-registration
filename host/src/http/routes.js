@@ -105,6 +105,7 @@ export function createRoutes({ runtime, config }) {
     // ---------- 管理端（M2：配置层与权限，需 JWT） ----------
     // 活动
     { method: 'GET', pattern: '/api/admin/activities', handler: admin('activity.list') },
+    { method: 'GET', pattern: '/api/admin/activities/stats', handler: admin('activity.stats') }, // M4 跨活动统计：须在 :id 之前注册
     { method: 'POST', pattern: '/api/admin/activities', handler: admin('activity.create') },
     { method: 'GET', pattern: '/api/admin/activities/:id', handler: admin('activity.detail', { activity_id: 'id' }) },
     { method: 'PUT', pattern: '/api/admin/activities/:id', handler: admin('activity.update', { activity_id: 'id' }) },
@@ -185,5 +186,33 @@ export function createRoutes({ runtime, config }) {
     { method: 'POST', pattern: '/api/admin/registrations/:rid/checkin', handler: admin('checkin.do', { registration_id: 'rid' }) },
     { method: 'POST', pattern: '/api/admin/checkin/receipt', handler: admin('checkin.do') },
     { method: 'GET', pattern: '/api/admin/activities/:id/checkin-code', handler: admin('checkin.code_current', { activity_id: 'id' }) },
+
+    // ---------- 管理端（M4：导出 / 统计，export.md 四） ----------
+    { method: 'GET', pattern: '/api/admin/activities/:id/export', handler: admin('registration.export', { activity_id: 'id' }) },
+    {
+      method: 'GET',
+      pattern: '/api/admin/activities/:id/export.csv',
+      handler: async (ctx) => {
+        const auth = requireAuth(ctx, config);
+        if (!auth) return { code: Errors.UNAUTHORIZED, message: '未登录或会话已过期' };
+        const args = { ...Object.fromEntries(ctx.query || []), uid: auth.uid, activity_id: Number(ctx.params.id) };
+        const out = await runtime.invoke({ op: 'registration.export_csv', args });
+        if (out.code !== Errors.OK) return out;
+        // TextDecoder 默认剥离 UTF-8 BOM（Excel 兼容），下载时补回
+        const csv = out.data.csv.startsWith('\uFEFF') ? out.data.csv : `\uFEFF${out.data.csv}`;
+        // 标记下载响应：server.js 据此写 raw CSV（Content-Disposition）而非 JSON
+        return {
+          code: 0,
+          data: out.data,
+          download: {
+            filename: `registrations_${ctx.params.id}.csv`,
+            contentType: 'text/csv; charset=utf-8',
+            content: csv,
+          },
+        };
+      },
+    },
+    { method: 'GET', pattern: '/api/admin/activities/:id/stats', handler: admin('registration.stats', { activity_id: 'id' }) },
+    { method: 'GET', pattern: '/api/admin/activities/:id/trend', handler: admin('registration.trend', { activity_id: 'id' }) },
   ];
 }

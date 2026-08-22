@@ -841,6 +841,232 @@ int main() {
     std::remove(reg_path.c_str());
   }
 
+  // ============ 导出统计（M4）：名单分块 / CSV / 看板 / 趋势 / 跨活动统计 ============
+  {
+    const std::string exp_path =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/sacc_exp_test.db";
+    std::remove(exp_path.c_str());
+    sacc::Db edb;
+    CHECK(edb.open(exp_path) == SQLITE_OK);
+    {
+      std::ifstream f(std::string(SACC_MIGRATIONS_DIR) + "/0001_init.sql");
+      std::stringstream ss;
+      ss << f.rdbuf();
+      CHECK(edb.migrate(ss.str(), 1) == SQLITE_OK);
+      std::ifstream f2(std::string(SACC_MIGRATIONS_DIR) + "/0002_seed_roles.sql");
+      std::stringstream ss2;
+      ss2 << f2.rdbuf();
+      CHECK(edb.migrate(ss2.str(), 2) == SQLITE_OK);
+      std::ifstream f3(std::string(SACC_MIGRATIONS_DIR) + "/0003_notification_activity_id.sql");
+      std::stringstream ss3;
+      ss3 << f3.rdbuf();
+      CHECK(edb.migrate(ss3.str(), 3) == SQLITE_OK);
+      std::ifstream f4(std::string(SACC_MIGRATIONS_DIR) + "/0004_registration_data_field_index.sql");
+      std::stringstream ss4;
+      ss4 << f4.rdbuf();
+      CHECK(edb.migrate(ss4.str(), 4) == SQLITE_OK);
+      CHECK(edb.userVersion() == 4);
+    }
+
+    // 用户与权限：root 超管 / admin_b 活动管理员(g2) / 报名者 e1 e2 / outsider
+    auto ereg = [&](const char* u) -> std::int64_t {
+      json rr = invoke(edb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
+                             R"(","password":"secret1234","name":")" + u + R"("}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["uid"].get<std::int64_t>();
+    };
+    const std::int64_t root_uid = ereg("root2");
+    const std::int64_t admin_uid = ereg("admin_b");
+    const std::int64_t e1 = ereg("user11");
+    const std::int64_t e2 = ereg("user12");
+    const std::int64_t outsider = ereg("outsider2");
+    CHECK(edb.execParams("INSERT INTO user_role (uid, role_id, group_id) VALUES (?, 1, NULL);",
+                         nlohmann::json::array({root_uid})) == SQLITE_OK);
+    json rr = invoke(edb, R"({"op":"group.create","args":{"uid":)" + std::to_string(root_uid) +
+                          R"(,"name":"G2"}})");
+    const std::int64_t g2 = rr["data"]["group_id"].get<std::int64_t>();
+    CHECK(invoke(edb, R"({"op":"user_role.grant","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"target_uid":)" + std::to_string(admin_uid) + R"(,"role_id":2,"group_id":)" +
+                      std::to_string(g2) + R"(}})")["code"] == 0);
+
+    // 活动 actA（need_review=false → 提交即通过）绑 g2 并发布；actB 不绑 g2（超管范围）
+    rr = invoke(edb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
+                    R"(,"name":"Seminar","need_review":false,"max_slots":2}})");
+    const std::int64_t actA = rr["data"]["activity_id"].get<std::int64_t>();
+    CHECK(invoke(edb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(actA) + R"(,"group_id":)" +
+                      std::to_string(g2) + R"(}})")["code"] == 0);
+    CHECK(invoke(edb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(actA) + R"(,"status":1}})")["code"] == 0);
+    rr = invoke(edb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
+                    R"(,"name":"Lecture","need_review":false}})");
+    const std::int64_t actB = rr["data"]["activity_id"].get<std::int64_t>();
+    CHECK(invoke(edb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(actB) + R"(,"status":1}})")["code"] == 0);
+
+    // 表单字段：姓名(文本必填) / 性别(单选) / 爱好(多选) / 隐藏字段(is_visible=0)
+    rr = invoke(edb, R"({"op":"form.create","args":{"uid":)" + std::to_string(root_uid) +
+                    R"(,"activity_id":)" + std::to_string(actA) + R"(,"name":"报名表"}})");
+    const std::int64_t formA = rr["data"]["form_id"].get<std::int64_t>();
+    auto ef = [&](const char* key, const char* label, int type, const char* extra) {
+      json f = invoke(edb, std::string(R"({"op":"form_field.create","args":{"uid":)") +
+                           std::to_string(root_uid) + R"(,"form_id":)" + std::to_string(formA) +
+                           R"(,"field_key":")" + key + R"(","field_label":")" + label +
+                           R"(","field_type":)" + std::to_string(type) + extra + R"(}})");
+      CHECK(f["code"] == 0);
+      return f["data"]["field_id"].get<std::int64_t>();
+    };
+    const std::int64_t f_n = ef("name_field", "姓名", 0, R"(,"is_required":true)");
+    const std::int64_t f_g = ef("gender", "性别", 2, R"(,"options":"[\"男\",\"女\"]")");
+    const std::int64_t f_h = ef("hobby", "爱好", 3, R"(,"options":"[\"篮球\",\"足球\",\"羽毛球\"]")");
+    const std::int64_t f_x = ef("hidden_f", "隐藏列", 0, R"(,"is_visible":false)");
+    (void)f_x;
+
+    // e1/e2 创建并提交（need_review=false → 直接已通过）；e1 文本含逗号引号测 CSV 转义
+    auto esub = [&](std::int64_t uid, const char* nv, const char* gv, const char* hv) {
+      json c = invoke(edb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(uid) +
+                        R"(,"activity_id":)" + std::to_string(actA) + R"(}})");
+      CHECK(c["code"] == 0);
+      const std::int64_t rid = c["data"]["registration_id"].get<std::int64_t>();
+      const std::string fields = std::string(R"("fields":[{"field_id":)") + std::to_string(f_n) +
+          R"(,"value":")" + nv + R"("},{"field_id":)" + std::to_string(f_g) + R"(,"value":")" +
+          gv + R"("},{"field_id":)" + std::to_string(f_h) + R"(,"value":")" + hv +
+          R"("}],"current_step":1)";
+      CHECK(invoke(edb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(uid) +
+                        R"(,"registration_id":)" + std::to_string(rid) + "," + fields +
+                        R"(}})")["code"] == 0);
+      json p = invoke(edb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(uid) +
+                        R"(,"registration_id":)" + std::to_string(rid) + R"(}})");
+      CHECK(p["code"] == 0 && p["data"]["status"] == 2);
+      return rid;
+    };
+    esub(e1, "张三", "男", R"([\"篮球\",\"羽毛球\"])");
+    esub(e2, "李四,\\\"好\\\"", "女", R"([\"篮球\"])");
+
+    // ===== 分块导出（registration.export）=====
+    rr = invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"limit":100}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 2);
+    // 列装配：可见动态列在、隐藏字段不在
+    bool has_hidden = false, has_name = false;
+    for (const auto& c : rr["data"]["columns"]) {
+      if (c["key"] == "hidden_f") has_hidden = true;
+      if (c["key"] == "name_field") has_name = true;
+    }
+    CHECK(!has_hidden && has_name);
+    // 字段值解析：单选/多选映射标签、多选分号连接
+    for (const auto& row : rr["data"]["rows"]) {
+      if (row["fields"]["name_field"] == "张三") {
+        CHECK(row["fields"]["gender"] == "男");
+        CHECK(row["fields"]["hobby"] == "篮球;羽毛球");
+      } else {
+        CHECK(row["fields"]["gender"] == "女");
+        CHECK(row["fields"]["hobby"] == "篮球");
+      }
+    }
+    CHECK(rr["data"]["next_cursor"] == 0);
+    CHECK(invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(outsider) +
+                      R"(,"activity_id":)" + std::to_string(actA) + R"(}})")["code"] == 403);
+    // 分块连续性（limit=1）：cursor 递进不重不漏
+    rr = invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"limit":1}})");
+    CHECK(rr["code"] == 0 && rr["data"]["rows"].size() == 1);
+    const std::int64_t c1 = rr["data"]["rows"][0]["registration_id"].get<std::int64_t>();
+    CHECK(rr["data"]["next_cursor"] == c1);
+    rr = invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"limit":1,"cursor":)" +
+                  std::to_string(c1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["rows"].size() == 1 &&
+          rr["data"]["rows"][0]["registration_id"].get<std::int64_t>() != c1);
+    // 筛选：status / keyword
+    rr = invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"status":2}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 2);
+    rr = invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"keyword":"user11"}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 1);
+    // cursor 非法 → 422
+    CHECK(invoke(edb, R"({"op":"registration.export","args":{"uid":)" + std::to_string(admin_uid) +
+                      R"(,"activity_id":)" + std::to_string(actA) + R"(,"cursor":-1}})")["code"] == 422);
+
+    // ===== CSV 导出（registration.export_csv）=====
+    rr = invoke(edb, R"({"op":"registration.export_csv","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 2);
+    const std::string csv = rr["data"]["csv"].get<std::string>();
+    CHECK(csv.compare(0, 3, "\xEF\xBB\xBF") == 0);            // UTF-8 BOM
+    CHECK(csv.find("凭证号") != std::string::npos);            // 表头
+    CHECK(csv.find("篮球;羽毛球") != std::string::npos);       // 多选连接
+    CHECK(csv.find("\"李四,\"\"好\"\"\"") != std::string::npos);  // RFC 4180 引号/逗号转义
+    CHECK(csv.find("隐藏列") == std::string::npos);            // 隐藏字段不出列
+    // 导出审计
+    rr = invoke(edb, R"({"op":"audit_log.list","args":{"uid":)" + std::to_string(root_uid) + R"(}})");
+    CHECK(rr["code"] == 0);
+    bool has_export = false;
+    for (const auto& a : rr["data"]["items"]) {
+      if (a["action"] == "export_registration") has_export = true;
+    }
+    CHECK(has_export);
+
+    // ===== 看板统计（registration.stats）=====
+    rr = invoke(edb, R"({"op":"registration.stats","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(}})");
+    CHECK(rr["code"] == 0);
+    CHECK(rr["data"]["taken"] == 2 && rr["data"]["capacity"] == 2 &&
+          rr["data"]["pending"] == 0 && rr["data"]["waitlist"] == 0);
+    bool s2_ok = false;
+    for (const auto& s : rr["data"]["status_dist"]) {
+      if (s["status"] == 2 && s["count"] == 2) s2_ok = true;
+    }
+    CHECK(s2_ok);
+    // 字段分布：性别 男1/女1；爱好 篮球2/羽毛球1（多选展开计数）
+    bool gender_ok = false, hobby_ok = false;
+    for (const auto& fd : rr["data"]["field_dist"]) {
+      if (fd["field_key"] == "gender") {
+        bool m = false, f = false;
+        for (const auto& it : fd["items"]) {
+          if (it["value"] == "男" && it["count"] == 1) m = true;
+          if (it["value"] == "女" && it["count"] == 1) f = true;
+        }
+        gender_ok = m && f;
+      }
+      if (fd["field_key"] == "hobby") {
+        bool b1 = false, b2 = false;
+        for (const auto& it : fd["items"]) {
+          if (it["value"] == "篮球" && it["count"] == 2) b2 = true;
+          if (it["value"] == "羽毛球" && it["count"] == 1) b1 = true;
+        }
+        hobby_ok = b1 && b2;
+      }
+    }
+    CHECK(gender_ok && hobby_ok);
+    CHECK(invoke(edb, R"({"op":"registration.stats","args":{"uid":)" + std::to_string(outsider) +
+                      R"(,"activity_id":)" + std::to_string(actA) + R"(}})")["code"] == 403);
+
+    // ===== 每日趋势（registration.trend，补 0）=====
+    rr = invoke(edb, R"({"op":"registration.trend","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(actA) + R"(,"days":7}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 7);
+    std::int64_t trend_total = 0;
+    for (const auto& it : rr["data"]["items"]) trend_total += it["count"].get<std::int64_t>();
+    CHECK(trend_total == 2);
+
+    // ===== 跨活动统计（activity.stats，分组范围过滤）=====
+    rr = invoke(edb, R"({"op":"activity.stats","args":{"uid":)" + std::to_string(admin_uid) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 1);
+    CHECK(rr["data"]["rows"][0]["name"] == "Seminar" && rr["data"]["rows"][0]["total"] == 2);
+    rr = invoke(edb, R"({"op":"activity.stats","args":{"uid":)" + std::to_string(root_uid) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 2);
+    rr = invoke(edb, R"({"op":"activity.stats","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"keyword":"Lecture"}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 0);
+    CHECK(invoke(edb, R"({"op":"activity.stats","args":{"uid":)" + std::to_string(outsider) +
+                      R"(}})")["code"] == 403);
+
+    edb.close();
+    std::remove(exp_path.c_str());
+  }
+
   std::remove(db_path.c_str());
 
   if (failures == 0) {

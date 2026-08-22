@@ -25,6 +25,7 @@ add_executable(backend_wasm
   ${SACC_SOURCES_DIR}/src/data/checkin.cpp
   ${SACC_SOURCES_DIR}/src/data/notification.cpp
   ${SACC_SOURCES_DIR}/src/data/subscribe.cpp
+  ${SACC_SOURCES_DIR}/src/data/export.cpp
   ${SACC_SOURCES_DIR}/third_party/sqlite/sqlite3.c
 )
 

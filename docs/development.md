@@ -80,8 +80,10 @@ sacc-registration/
 - 通知：站内信直写、邮件标记 `send_status` 由宿主发送、订阅提醒由宿主定时任务触发
 
 **M4（导出统计）**
-- 名单导出：`wasm_export_chunk(offset, limit)` 分块，表头按 `form_field` 拼装
-- 统计：按分组 / 字段 / 状态聚合，供看板
+- 设计文档：[export.md](backend/export.md)（名单分块 / CSV / 单活动看板 / 趋势 / 跨活动统计 / 决策记录）
+- 名单导出：`registration.export` 分块拉取（cursor + 动态列 + 选项标签映射）、`registration.export_csv` 一次性下载（RFC 4180 + BOM）
+- 统计：`registration.stats`（状态分布 / 名额 / 字段分布，多选 JSON 展开）、`registration.trend`（按天补 0）、`activity.stats`（分组范围跨活动计数）
+- 权限：导出须 `can_manage_activity` + 审计；统计 `can_read_activity`；迁移 0004 补 `registration_data(field_id)` 索引
 
 ## 五、宿主实现计划（host/）
 

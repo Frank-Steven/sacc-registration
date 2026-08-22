@@ -123,6 +123,15 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
           return;
         }
         const out = await route.handler({ query: url.searchParams, body, headers: req.headers, params });
+        // 下载型响应（M4 export.csv）：写 raw 内容 + Content-Disposition，而非 JSON
+        if (out && out.download && out.code === 0) {
+          res.writeHead(200, {
+            'content-type': out.download.contentType || 'application/octet-stream',
+            'content-disposition': `attachment; filename="${out.download.filename || 'download'}"`,
+          });
+          res.end(out.download.content);
+          return;
+        }
         sendJson(res, httpStatusFor(out.code), out);
         return;
       }

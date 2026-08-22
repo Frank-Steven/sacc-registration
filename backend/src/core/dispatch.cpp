@@ -11,6 +11,7 @@
 #include "config/template.h"
 #include "core/util.h"
 #include "data/checkin.h"
+#include "data/export.h"
 #include "data/notification.h"
 #include "data/registration.h"
 #include "data/review.h"
@@ -143,6 +144,7 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "activity.delete") return activity_delete(db, args);
     if (op == "activity.public_list") return activity_public_list(db, args);
     if (op == "activity.public_detail") return activity_public_detail(db, args);
+    if (op == "activity.stats") return activity_stats(db, args);  // M4 跨活动统计
 
     if (op == "group.create") return group_create(db, args);
     if (op == "group.update") return group_update(db, args);
@@ -193,6 +195,10 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "registration.admin_list") return registration_admin_list(db, args);
     if (op == "registration.admin_detail") return registration_admin_detail(db, args);
     if (op == "registration.review") return registration_review(db, args);
+    if (op == "registration.export") return registration_export(db, args);  // M4
+    if (op == "registration.export_csv") return registration_export_csv(db, args);  // M4
+    if (op == "registration.stats") return registration_stats(db, args);  // M4
+    if (op == "registration.trend") return registration_trend(db, args);  // M4
 
     if (op == "checkin.do") return checkin_do(db, args);
     if (op == "checkin.mine") return checkin_mine(db, args);
