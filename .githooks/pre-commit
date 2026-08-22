@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# pre-commit：提交前自动拦截宿主层类型错误（JSDoc + checkJs，见 docs/host-jsdoc.md）
+# 由 scripts/install-hooks.sh 通过 core.hooksPath 指向本目录启用。
+# 跳过（不推荐）：git commit --no-verify
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+# 仅当暂存区含宿主 JS 变更时检查，避免无关提交被拦截
+if git diff --cached --name-only --diff-filter=ACM | grep -qE '^host/.*\.(js|mjs)$'; then
+  echo "==> [pre-commit] host typecheck (checkJs)"
+  npx tsc -p host/jsconfig.json --noEmit
+  echo "==> [pre-commit] typecheck OK"
+fi
+exit 0

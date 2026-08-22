@@ -15,11 +15,17 @@
     "backend:test": "cd backend && ctest --test-dir build --output-on-failure",
     "backend:wasm": "cd backend && cmake --build build --target backend_wasm",
     "host:dev": "cd host && node src/index.js",
-    "host:test": "cd host && node --test test/smoke.test.mjs",
+    "host:test": "cd host && node --test \"test/*.test.mjs\"",
+    "host:typecheck": "tsc -p host/jsconfig.json --noEmit",
+    "hooks:install": "bash scripts/install-hooks.sh",
     "frontend:dev": "cd frontend && yarn dev",
     "frontend:build": "cd frontend && yarn build",
     "build": "yarn backend:build && yarn backend:wasm && yarn frontend:build",
     "test": "bash scripts/test.sh",
     "dev": "bash scripts/dev.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
   }
 }

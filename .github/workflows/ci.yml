@@ -5,19 +5,32 @@ on:
     branches: [main]
   pull_request:
 
+# 同一分支的重复运行只保留最新（PR 更新时取消旧构建）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (cache yarn)
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: yarn
 
       - name: Install dependencies (yarn workspaces)
         run: yarn install --frozen-lockfile
+
+      # 验证 hooks 安装脚本（core.hooksPath -> .githooks）；本地 yarn hooks:install 同源
+      - name: Install git hooks
+        run: yarn hooks:install
 
       - name: Setup wasi-sdk
         run: |
@@ -27,5 +40,6 @@ jobs:
           tar -xzf /tmp/wasi-sdk.tar.gz -C .tools
           echo "WASI_SDK_PREFIX=$GITHUB_WORKSPACE/.tools/wasi-sdk-25.0-x86_64-linux" >> "$GITHUB_ENV"
 
+      # 统一入口：native ctest → backend.wasm → host typecheck → host 集成测试（含 pre-commit hook 拦截验证）→ 前端 build
       - name: Run unified tests (yarn test)
         run: yarn test

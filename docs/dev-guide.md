@@ -65,6 +65,7 @@ cd frontend && yarn dev
 
 - C++：clang-format（`.clang-format`）、clangd
 - 前端：ESLint + Prettier（`.eslintrc` / `.prettierrc`），保存自动格式化
+- 宿主 JS：`host/jsconfig.json` 启用 checkJs（JSDoc 类型，见 [host-jsdoc](host-jsdoc.md)），VSCode 保存即时报错；不引入 TS 编译链
 - 统一缩进 2 空格、UTF-8、行尾 LF
 
 ## 二、开发工作流
@@ -75,6 +76,7 @@ cd frontend && yarn dev
 - 提交信息（Conventional Commits）：
   - `feat:` 新功能 · `fix:` 缺陷修复 · `refactor:` 重构 · `docs:` 文档 · `chore:` 工程杂项
   - 示例：`feat(auth): 登录失败锁定与密码重置`
+- 提交钩子：`.githooks/pre-commit` 在暂存含宿主 JS 变更时自动跑类型检查，失败则拦截（克隆后先 `yarn hooks:install`；跳过用 `git commit --no-verify`）
 - 禁止直接向 `main` 推送（PR + 评审后合入）
 
 ### 接口开发约定（契约先行）
@@ -90,12 +92,13 @@ cd frontend && yarn dev
 | 层 | 位置 | 触发 |
 |---|---|---|
 | C++ 单元测试（状态机 / 权限 / 防超卖） | `backend/test/` | `yarn test` 内置 `ctest`，提交前必跑 |
+| 宿主类型检查（JSDoc + checkJs） | `host/`（`host/jsconfig.json`） | `yarn test` 内置 `npx tsc -p host/jsconfig.json --noEmit`；提交前由 `.githooks/pre-commit` 自动拦截 |
 | 宿主集成测试（wasm 调用 + 迁移 + HTTP） | `host/test/` | `yarn test` 内置 `node --test host/test/smoke.test.mjs`，本地 + CI |
 | 前端构建冒烟（单测待 M7） | `frontend/` | `yarn test` 内置 `yarn workspace sacc-frontend build` |
 | 前端 E2E（Playwright，报名 / 审核 / 签到主路径） | `frontend/e2e/`（规划中，M7） | 待实现 |
 
-- `yarn test` 执行顺序：backend native 构建 + `ctest` → 编译 `backend.wasm` → 宿主集成测试 → 前端构建
-- 仅跑单层：`yarn backend:test`（需先 `yarn backend:build`）、`yarn host:test`（需先 `yarn backend:wasm`）
+- `yarn test` 执行顺序：backend native 构建 + `ctest` → 编译 `backend.wasm` → 宿主类型检查 → 宿主集成测试 → 前端构建
+- 仅跑单层：`yarn backend:test`（需先 `yarn backend:build`）、`yarn host:test`（需先 `yarn backend:wasm`）、`yarn host:typecheck`（无依赖）
 - 关键业务（名额、状态机、权限）要求测试先行或随功能提交
 
 ## 三、CI / CD 流水线
@@ -111,9 +114,9 @@ flowchart LR
     ART --> DEPLOY[部署：单实例 + 备份任务]
 ```
 
-- 主分支合入触发完整流水线；PR 触发构建 + 单测（快速反馈）
+- 主分支合入触发完整流水线；PR 触发构建 + 单测（快速反馈）；同分支重复运行自动取消（concurrency），`contents: read` 最小权限
 - 产物版本号与 git tag 对应（`v0.1.0`）
-- **当前状态**：`.github/workflows/ci.yml` 已实现「构建 backend.wasm → native ctest → 宿主集成测试 → 前端 build」，测试部分由 `yarn test` 统一入口执行（与本地一致）；E2E、发布产物与部署步骤待后续里程碑（M7）补齐
+- **当前状态**：`.github/workflows/ci.yml` 已实现「构建 backend.wasm → native ctest → 宿主 typecheck → 宿主集成测试（含 pre-commit hook 拦截验证）→ 前端 build」，测试部分由 `yarn test` 统一入口执行（与本地一致），并缓存 yarn 依赖；E2E、发布产物与部署步骤待后续里程碑（M7）补齐
 
 ## 四、协作与评审
 

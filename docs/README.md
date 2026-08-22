@@ -11,6 +11,7 @@ docs/
 ├── ux.md                     体验设计（按角色）
 ├── development.md            开发实现方案（里程碑 / 工程结构 / 实现计划 / 验收）
 ├── dev-guide.md              开发工作流与环境配置（工具链 / CI / 规范）
+├── host-jsdoc.md             宿主层类型检查（JSDoc + checkJs）维护指南
 ├── backend/                  后端设计
 │   ├── index.md              后端文档导航
 │   ├── wasm.md               WebAssembly 技术方案
@@ -36,6 +37,7 @@ docs/
 - 前端：[overview](overview.md) → [前端导航](frontend/index.md) → 页面 / 交互 / 组件 / 响应式 / 优化
 - 实现：[development](development.md) → 里程碑 M0-M7 顺序推进
 - 协作：[dev-guide](dev-guide.md) → 环境配置 / 工作流 / CI
+- 宿主类型：[host-jsdoc](host-jsdoc.md) → checkJs 约定 / wasm 边界类型 / 提交拦截
 
 ## 技术栈
 

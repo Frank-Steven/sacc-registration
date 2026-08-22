@@ -43,6 +43,10 @@ export class WasmRuntime {
   }
 
   // 调用 wasm_invoke，返回解析后的响应 JSON { code, data?, message? }
+  /**
+   * @param {import('../wasm-types.js').InvokeRequest} req
+   * @returns {import('../wasm-types.js').InvokeResult}
+   */
   invoke(req) {
     const { memory, wasm_alloc, wasm_free, wasm_invoke } = this.#exports;
     const payload = new TextEncoder().encode(JSON.stringify(req) + '\0');
