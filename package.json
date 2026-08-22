@@ -1,13 +1,25 @@
 {
   "name": "sacc-registration",
   "version": "0.1.0",
-  "description": "sacc registration design",
-  "main": "index.js",
+  "description": "SACC 报名系统：C++/WASM 后端 + Node 宿主 + React 前端",
   "repository": "https://github.com/Frank-Steven/sacc-registration.git",
   "author": "Frank-Steven <FrankStevenTool@outlook.com>",
   "license": "MIT",
-  "private": false,
-  "dependencies": {
-    "react": "^19.2.8"
+  "private": true,
+  "workspaces": [
+    "host",
+    "frontend"
+  ],
+  "scripts": {
+    "backend:build": "cd backend && cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
+    "backend:test": "cd backend && ctest --test-dir build --output-on-failure",
+    "backend:wasm": "cd backend && cmake --build build --target backend_wasm",
+    "host:dev": "cd host && node src/index.js",
+    "host:test": "cd host && node --test test/smoke.test.mjs",
+    "frontend:dev": "cd frontend && yarn dev",
+    "frontend:build": "cd frontend && yarn build",
+    "build": "yarn backend:build && yarn backend:wasm && yarn frontend:build",
+    "test": "bash scripts/test.sh",
+    "dev": "bash scripts/dev.sh"
   }
 }

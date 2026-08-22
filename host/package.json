@@ -1,0 +1,15 @@
+{
+  "name": "sacc-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SACC 报名系统宿主服务：HTTP + WASM 运行时 + 迁移",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test test/smoke.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

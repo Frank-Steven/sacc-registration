@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies (yarn workspaces)
+        run: yarn install --frozen-lockfile
+
+      - name: Setup wasi-sdk
+        run: |
+          curl -fL -o /tmp/wasi-sdk.tar.gz \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+          mkdir -p .tools
+          tar -xzf /tmp/wasi-sdk.tar.gz -C .tools
+          echo "WASI_SDK_PREFIX=$GITHUB_WORKSPACE/.tools/wasi-sdk-25.0-x86_64-linux" >> "$GITHUB_ENV"
+
+      - name: Run unified tests (yarn test)
+        run: yarn test

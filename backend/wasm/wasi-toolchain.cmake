@@ -1,0 +1,22 @@
+# wasm32-wasi 交叉编译工具链（wasi-sdk）
+set(CMAKE_SYSTEM_NAME WASI)
+set(CMAKE_SYSTEM_PROCESSOR wasm32)
+
+set(WASI_SDK_PREFIX "" CACHE PATH "wasi-sdk 安装前缀")
+
+set(CMAKE_C_COMPILER ${WASI_SDK_PREFIX}/bin/clang)
+set(CMAKE_CXX_COMPILER ${WASI_SDK_PREFIX}/bin/clang++)
+set(CMAKE_C_COMPILER_TARGET wasm32-wasi)
+set(CMAKE_CXX_COMPILER_TARGET wasm32-wasi)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# wasi-sdk 25 的 libc++ 为无异常构建，用户代码须匹配（-fno-exceptions）
+set(CMAKE_CXX_FLAGS_INIT "-fno-exceptions")
+
+set(CMAKE_FIND_ROOT_PATH ${WASI_SDK_PREFIX}/share/wasi-sysroot)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
