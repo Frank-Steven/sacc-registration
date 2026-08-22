@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -32,6 +33,17 @@ public:
 
   // 写 SQL，返回 SQLITE_OK / 错误码
   int exec(const std::string& sql);
+
+  // 写 SQL（参数绑定，JSON 数组 1 基），返回 SQLITE_OK / 错误码
+  int execParams(const std::string& sql, const nlohmann::json& params);
+
+  // 事务控制（业务侧多语句原子操作）
+  int begin();   // BEGIN IMMEDIATE
+  int commit();  // COMMIT
+  int rollback(); // ROLLBACK
+
+  // 最近一次 INSERT 的自增主键（未插入返回 0）
+  std::int64_t lastInsertRowid() const;
 
   // 查询：绑定参数（JSON 数组，1 基）后取行
   int query(const std::string& sql, const nlohmann::json& params, nlohmann::json& out_rows,

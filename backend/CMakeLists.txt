@@ -28,6 +28,8 @@ add_library(sacc_core STATIC
   src/core/util.cpp
   src/core/db.cpp
   src/core/dispatch.cpp
+  src/crypto/kdf.cpp
+  src/user/auth.cpp
   third_party/sqlite/sqlite3.c
 )
 target_include_directories(sacc_core PUBLIC ${SACC_INCLUDE_DIRS})
@@ -37,6 +39,9 @@ target_compile_definitions(sacc_core PRIVATE ${SACC_SQLITE_DEFS})
 enable_testing()
 add_executable(sacc_test test/test_main.cpp)
 target_link_libraries(sacc_test PRIVATE sacc_core)
+target_compile_definitions(sacc_test PRIVATE
+  SACC_MIGRATIONS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../db/migrations"
+)
 add_test(NAME sacc_core COMMAND sacc_test)
 
 # ---------- wasm 目标（backend.wasm） ----------

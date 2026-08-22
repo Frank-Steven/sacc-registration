@@ -102,6 +102,36 @@ int Db::exec(const std::string& sql) {
   return rc;
 }
 
+int Db::execParams(const std::string& sql, const nlohmann::json& params) {
+  if (!db_) return SQLITE_MISUSE;
+  sqlite3_stmt* stmt = nullptr;
+  int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) {
+    errmsg_ = sqlite3_errmsg(db_);
+    return rc;
+  }
+  rc = bindParams(stmt, params);
+  if (rc != SQLITE_OK) {
+    errmsg_ = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    return rc;
+  }
+  rc = sqlite3_step(stmt);
+  if (rc != SQLITE_DONE) {
+    errmsg_ = sqlite3_errmsg(db_);
+    sqlite3_finalize(stmt);
+    return rc;
+  }
+  sqlite3_finalize(stmt);
+  return SQLITE_OK;
+}
+
+int Db::begin() { return exec("BEGIN IMMEDIATE;"); }
+int Db::commit() { return exec("COMMIT;"); }
+int Db::rollback() { return exec("ROLLBACK;"); }
+
+std::int64_t Db::lastInsertRowid() const { return db_ ? sqlite3_last_insert_rowid(db_) : 0; }
+
 int Db::query(const std::string& sql, const nlohmann::json& params, nlohmann::json& out_rows,
               std::string& out_err) {
   out_rows = nlohmann::json::array();

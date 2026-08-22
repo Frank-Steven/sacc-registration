@@ -71,7 +71,7 @@ export function createServer({ runtime, routes, frontendDist, logger }) {
           sendJson(res, 404, { code: Errors.NOT_FOUND, message: 'not found' });
           return;
         }
-        const out = await route.handler({ query: url.searchParams, body });
+        const out = await route.handler({ query: url.searchParams, body, headers: req.headers });
         sendJson(res, httpStatusFor(out.code), out);
         return;
       }

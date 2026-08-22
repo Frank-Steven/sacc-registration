@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { config, ROOT } from './config.js';
 import { logger } from './logger.js';
@@ -8,8 +9,10 @@ import { createRoutes } from './http/routes.js';
 import { createServer } from './http/server.js';
 
 async function main() {
+  // JWT_SECRET 未配置时生成临时随机密钥（重启后 token 失效，仅限开发）；生产必须显式配置
   if (!config.jwtSecret) {
-    logger.warn('JWT_SECRET 未配置，会话功能暂不可用（M1 起启用）');
+    config.jwtSecret = crypto.randomBytes(32).toString('hex');
+    logger.warn('JWT_SECRET 未配置，已生成临时密钥（重启后会话失效），生产环境请显式配置');
   }
 
   // WASI 预打开目录须存在（数据库所在目录）
@@ -27,7 +30,7 @@ async function main() {
   // 3. HTTP 服务
   const server = createServer({
     runtime,
-    routes: createRoutes(runtime),
+    routes: createRoutes({ runtime, config }),
     frontendDist: config.frontendDist,
     logger,
   });

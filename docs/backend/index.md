@@ -9,6 +9,7 @@
 | 文档 | 内容 |
 |---|---|
 | [wasm.md](wasm.md) | WebAssembly 技术方案（架构 / 编译 / ABI / 并发 / 部署） |
+| [auth.md](auth.md) | 认证与账号体系（M1 实现：注册 / 登录 / 锁定 / 重置 / JWT） |
 | [config-layer.md](config-layer.md) | 配置层：活动 / 分组 / 表单 / 字段 / 配置预留 |
 | [user-layer.md](user-layer.md) | 用户层：账号 / 角色 / 通知 / 订阅 / 偏好 |
 | [data-layer.md](data-layer.md) | 数据层：报名 / 明细 + 状态机 |

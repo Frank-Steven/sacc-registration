@@ -9,7 +9,7 @@
 | 里程碑 | 内容 | 产出 |
 |---|---|---|
 | M0 工程骨架 | 仓库结构、构建脚本、CI、数据库迁移框架 | `backend.wasm` 空模块可编译、宿主可调用 ✅ 已完成 |
-| M1 数据层核心 | 建表 DDL、WASM ABI 骨架、注册 / 登录（哈希 / 锁定 / 重置） | 账号体系可用 |
+| M1 数据层核心 | 建表 DDL、WASM ABI 骨架、注册 / 登录（哈希 / 锁定 / 重置） | 账号体系可用 ✅ 已完成 |
 | M2 配置层 | 活动 / 分组 / 表单 / 字段 / 模板 / 配置、角色与分组权限 | 管理端配置 API |
 | M3 报名链路 | 草稿 / 提交 / 防超卖 / 候补递补 / 审核 / 修改取消 / 签到 / 通知 | 报名全流程 API |
 | M4 导出统计 | 名单分块导出、聚合统计 | 导出与看板 API |
@@ -58,7 +58,7 @@ sacc-registration/
 - `db/migrations/0001_init.sql`：全部表 DDL（`activity` 至 `audit_log`，含唯一约束与索引，见 [indexes.md](backend/indexes.md)）
 - WASM ABI：`wasm_alloc` / `wasm_free` + JSON 入出参封装（见 [wasm.md](backend/wasm.md)）
 - 账号：注册（`account` + `user` 同事务）、登录（`login_fail_count` 锁定至 `lock_until`）、重置（`reset_token` + `reset_expire` 经 `user.email`）
-- 安全：scrypt/bcrypt 哈希在模块内完成
+- 安全：PBKDF2-HMAC-SHA256（100k 迭代）哈希在模块内完成（决策见 [auth.md](backend/auth.md)）
 
 **M2（配置层）**
 - 活动 CRUD（`activity_type` / `need_review` / `allow_modify` / 软删）

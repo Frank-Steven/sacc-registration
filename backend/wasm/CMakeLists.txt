@@ -10,6 +10,8 @@ add_executable(backend_wasm
   ${SACC_SOURCES_DIR}/src/core/util.cpp
   ${SACC_SOURCES_DIR}/src/core/db.cpp
   ${SACC_SOURCES_DIR}/src/core/dispatch.cpp
+  ${SACC_SOURCES_DIR}/src/crypto/kdf.cpp
+  ${SACC_SOURCES_DIR}/src/user/auth.cpp
   ${SACC_SOURCES_DIR}/third_party/sqlite/sqlite3.c
 )
 

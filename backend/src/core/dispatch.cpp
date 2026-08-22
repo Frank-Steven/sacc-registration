@@ -4,6 +4,7 @@
 #include <string>
 
 #include "core/util.h"
+#include "user/auth.h"
 
 namespace sacc {
 
@@ -88,6 +89,16 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     nlohmann::json names = nlohmann::json::array();
     for (const auto& r : rows) names.push_back(r["name"]);
     return ok({{"tables", std::move(names)}});
+  }
+  // 认证业务（M1）：依赖已打开的数据库
+  if (op == "auth.register" || op == "auth.login" || op == "auth.me" ||
+      op == "auth.reset_request" || op == "auth.reset_confirm") {
+    if (!db.isOpen()) return err(kDbError, "db not open");
+    if (op == "auth.register") return auth_register(db, args);
+    if (op == "auth.login") return auth_login(db, args);
+    if (op == "auth.me") return auth_me(db, args);
+    if (op == "auth.reset_request") return auth_reset_request(db, args);
+    if (op == "auth.reset_confirm") return auth_reset_confirm(db, args);
   }
   return err(kUnknownOp, "unknown op: " + op);
 }
