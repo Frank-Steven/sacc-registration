@@ -156,5 +156,34 @@ export function createRoutes({ runtime, config }) {
       handler: (ctx) =>
         runtime.invoke({ op: 'activity.public_detail', args: { activity_id: Number(ctx.params.id) } }),
     },
+
+    // ---------- 报名端本人（M3：报名 / 签到 / 通知 / 订阅，需 Bearer token） ----------
+    {
+      method: 'POST',
+      pattern: '/api/activities/:id/registration',
+      handler: admin('registration.create', { activity_id: 'id' }),
+    },
+    { method: 'GET', pattern: '/api/me/registrations', handler: admin('registration.mine') },
+    { method: 'GET', pattern: '/api/me/registrations/:rid', handler: admin('registration.detail', { registration_id: 'rid' }) },
+    { method: 'PUT', pattern: '/api/me/registrations/:rid', handler: admin('registration.save', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/me/registrations/:rid/submit', handler: admin('registration.submit', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/me/registrations/:rid/cancel', handler: admin('registration.cancel', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/me/registrations/:rid/checkin', handler: admin('checkin.mine', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/me/checkin/code', handler: admin('checkin.code') },
+    { method: 'GET', pattern: '/api/me/notifications', handler: admin('notification.mine') },
+    { method: 'GET', pattern: '/api/me/notifications/unread-count', handler: admin('notification.unread_count') },
+    { method: 'PUT', pattern: '/api/me/notifications/:nid/read', handler: admin('notification.read', { notification_id: 'nid' }) },
+    { method: 'PUT', pattern: '/api/me/notifications/read-all', handler: admin('notification.read_all') },
+    { method: 'POST', pattern: '/api/me/subscribe/:activityId', handler: admin('subscribe.add', { activity_id: 'activityId' }) },
+    { method: 'DELETE', pattern: '/api/me/subscribe/:activityId', handler: admin('subscribe.remove', { activity_id: 'activityId' }) },
+    { method: 'GET', pattern: '/api/me/subscribes', handler: admin('subscribe.mine') },
+
+    // ---------- 管理端（M3：报名名单 / 审核 / 签到 / 动态码） ----------
+    { method: 'GET', pattern: '/api/admin/activities/:id/registrations', handler: admin('registration.admin_list', { activity_id: 'id' }) },
+    { method: 'GET', pattern: '/api/admin/registrations/:rid', handler: admin('registration.admin_detail', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/admin/registrations/:rid/review', handler: admin('registration.review', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/admin/registrations/:rid/checkin', handler: admin('checkin.do', { registration_id: 'rid' }) },
+    { method: 'POST', pattern: '/api/admin/checkin/receipt', handler: admin('checkin.do') },
+    { method: 'GET', pattern: '/api/admin/activities/:id/checkin-code', handler: admin('checkin.code_current', { activity_id: 'id' }) },
   ];
 }

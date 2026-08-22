@@ -10,6 +10,11 @@
 #include "config/role.h"
 #include "config/template.h"
 #include "core/util.h"
+#include "data/checkin.h"
+#include "data/notification.h"
+#include "data/registration.h"
+#include "data/review.h"
+#include "data/subscribe.h"
 #include "user/auth.h"
 
 namespace sacc {
@@ -72,6 +77,15 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (!db.isOpen()) return err(kDbError, "db not open");
     const std::string sql = args.value("sql", "");
     const int rc = db.exec(sql);
+    if (rc != SQLITE_OK) return err(kDbError, "exec failed: " + db.lastError());
+    return ok({{"changes", db.lastChanges()}});
+  }
+  if (op == "db.exec_params") {
+    // 参数化写通道（宿主直调，避免字符串拼接注入；params 为 JSON 数组，1 基绑定）
+    if (!db.isOpen()) return err(kDbError, "db not open");
+    const std::string sql = args.value("sql", "");
+    const auto& params = args.contains("params") ? args["params"] : nlohmann::json();
+    const int rc = db.execParams(sql, params);
     if (rc != SQLITE_OK) return err(kDbError, "exec failed: " + db.lastError());
     return ok({{"changes", db.lastChanges()}});
   }
@@ -165,6 +179,34 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "user_role.revoke") return user_role_revoke(db, args);
     if (op == "user_role.list") return user_role_list(db, args);
     if (op == "audit_log.list") return audit_log_list(db, args);
+  }
+  // 报名链路业务（M3）：报名 / 审核 / 签到 / 通知 / 订阅
+  if (op.rfind("registration.", 0) == 0 || op.rfind("checkin.", 0) == 0 ||
+      op.rfind("notification.", 0) == 0 || op.rfind("subscribe.", 0) == 0) {
+    if (!db.isOpen()) return err(kDbError, "db not open");
+    if (op == "registration.create") return registration_create(db, args);
+    if (op == "registration.save") return registration_save(db, args);
+    if (op == "registration.submit") return registration_submit(db, args);
+    if (op == "registration.cancel") return registration_cancel(db, args);
+    if (op == "registration.detail") return registration_detail(db, args);
+    if (op == "registration.mine") return registration_mine(db, args);
+    if (op == "registration.admin_list") return registration_admin_list(db, args);
+    if (op == "registration.admin_detail") return registration_admin_detail(db, args);
+    if (op == "registration.review") return registration_review(db, args);
+
+    if (op == "checkin.do") return checkin_do(db, args);
+    if (op == "checkin.mine") return checkin_mine(db, args);
+    if (op == "checkin.code") return checkin_code(db, args);
+    if (op == "checkin.code_current") return checkin_code_current(db, args);
+
+    if (op == "notification.mine") return notification_mine(db, args);
+    if (op == "notification.unread_count") return notification_unread_count(db, args);
+    if (op == "notification.read") return notification_read(db, args);
+    if (op == "notification.read_all") return notification_read_all(db, args);
+
+    if (op == "subscribe.add") return subscribe_add(db, args);
+    if (op == "subscribe.remove") return subscribe_remove(db, args);
+    if (op == "subscribe.mine") return subscribe_mine(db, args);
   }
   return err(kUnknownOp, "unknown op: " + op);
 }

@@ -37,6 +37,12 @@ add_library(sacc_core STATIC
   src/config/template.cpp
   src/config/config.cpp
   src/config/role.cpp
+  src/data/registration.cpp
+  src/data/validation.cpp
+  src/data/review.cpp
+  src/data/checkin.cpp
+  src/data/notification.cpp
+  src/data/subscribe.cpp
   third_party/sqlite/sqlite3.c
 )
 target_include_directories(sacc_core PUBLIC ${SACC_INCLUDE_DIRS})

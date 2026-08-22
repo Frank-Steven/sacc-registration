@@ -29,7 +29,7 @@ const std::map<std::string, ConfigKey>& activityKeys() {
       {"venue_address", {2, "线下场地地址"}},
       {"meeting_link", {2, "线上会议链接"}},
       {"meeting_pwd", {2, "线上会议密码"}},
-      {"checkin_mode", {1, "签到方式：0 现场 / 1 线上"}},
+      {"checkin_mode", {1, "签到方式：0 现场 / 1 线上自助 / 2 线上动态码"}},
       {"notify_channel", {1, "通知渠道：0 站内信 / 1 邮件"}},
   };
   return m;
@@ -39,6 +39,7 @@ const std::map<std::string, ConfigKey>& systemKeys() {
   static const std::map<std::string, ConfigKey> m = {
       {"site_name", {2, "站点名称"}},
       {"max_upload_size", {1, "上传大小上限（MB）"}},
+      {"checkin_secret", {2, "签到动态码密钥（checkin_mode=2 时使用，仅超管可读写）"}},
   };
   return m;
 }
@@ -118,9 +119,14 @@ bool normalizeValue(int type, const nlohmann::json& raw, std::string& out_value,
   return false;
 }
 
-// 单个 key 的额外取值约束（checkin_mode / notify_channel 仅 0/1）
+// 单个 key 的额外取值约束（checkin_mode 0/1/2；notify_channel 仅 0/1）
 const nlohmann::json* extraValidate(const std::string& key, const std::string& value) {
-  if ((key == "checkin_mode" || key == "notify_channel") && value != "0" && value != "1") {
+  if (key == "checkin_mode") {
+    if (value != "0" && value != "1" && value != "2") {
+      static const nlohmann::json err = cfg_err(kValidation, "该配置仅接受 0、1 或 2");
+      return &err;
+    }
+  } else if (key == "notify_channel" && value != "0" && value != "1") {
     static const nlohmann::json err = cfg_err(kValidation, "该配置仅接受 0 或 1");
     return &err;
   }

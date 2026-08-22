@@ -6,6 +6,7 @@ import { logger } from './logger.js';
 import { WasmRuntime } from './wasm-runtime/runtime.js';
 import { runMigrations } from './db/migrate.js';
 import { scheduleDailyBackup } from './task/backup.js';
+import { scheduleNotify } from './task/notify.js';
 import { createRoutes } from './http/routes.js';
 import { createServer } from './http/server.js';
 
@@ -51,6 +52,9 @@ async function main() {
 
   // 4. 每日备份任务（启动即做一次；错误仅告警不阻断服务）
   scheduleDailyBackup({ runtime, wasmPath: config.wasmPath, dbPath: config.dbPath });
+
+  // 4.1 通知任务（活动提醒 + 邮件队列；SMTP 未配置时仅提醒、邮件保持待发送）
+  scheduleNotify({ runtime, sendMail: null });
 
   // 5. HTTP 服务
   const server = createServer({

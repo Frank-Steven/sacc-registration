@@ -71,6 +71,7 @@ sacc-registration/
 - ✅ 已完成：backend `src/config/` 7 模块 + 迁移 `0002_seed_roles.sql`；host 路径参数路由 + `/api/admin/*` + 公开读路由 + `task/backup.js`；native 单测与 host smoke（HTTP 全链路）全量通过
 
 **M3（报名链路）**
+- 设计文档：[registration.md](backend/registration.md)（状态机 / 名额与候补 / 审核 / 签到 / 通知 / 接口契约 / 决策记录）
 - 报名：`(activity_id, uid)` 唯一校验 → 草稿（`current_step`）→ 提交生成 `receipt_no`
 - 状态机：按 [data-layer.md](backend/data-layer.md#状态机) 用状态转移表实现，全部 10 条转移
 - 名额：条件更新 `已报名数 < max_slots`；满员置候补 `queue_no`；取消 / 递补自动处理

@@ -6,6 +6,14 @@ import { createBackup } from '../task/backup.js';
 // 宿主启动时按 PRAGMA user_version 顺序执行 db/migrations/NNNN_*.sql
 // SQL 在 wasm 模块内的事务中执行（BEGIN/COMMIT + user_version 更新）
 // 有待执行迁移且库非空（user_version > 0）时，先自动备份（disaster-recovery.md 2.1）
+/**
+ * @param {import('../wasm-runtime/runtime.js').WasmRuntime} runtime
+ * @param {object} opts
+ * @param {string} opts.root
+ * @param {string} opts.dbPath
+ * @param {string} [opts.wasmPath]
+ * @returns {Promise<number>} 迁移后的 user_version
+ */
 export async function runMigrations(runtime, { root, dbPath, wasmPath }) {
   const dir = path.join(root, 'db', 'migrations');
   const files = fs

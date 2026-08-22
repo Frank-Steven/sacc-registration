@@ -41,13 +41,13 @@ test('wasm runtime: 非法 JSON 返回错误码而非崩溃', async () => {
   assert.equal(res.code, 2001); // db 未打开
 });
 
-test('migrations: 空库初始化为版本 1 并建全部表', async () => {
+test('migrations: 空库初始化为最新版本并建全部表', async () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'sacc-host-'));
   try {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 2);
+    assert.equal(version, 3);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
@@ -68,8 +68,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 2);
-    assert.equal(v2, 2);
+    assert.equal(v1, 3);
+    assert.equal(v2, 3);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -167,8 +167,8 @@ test('auth HTTP: 注册签发 token → me 鉴权 → 未登录 / 假 token 401'
     frontendDist: path.join(tmp, 'no-dist'),
     logger: { error: () => {} },
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
   const post = (p, body, headers = {}) =>
     fetch(`${base}${p}`, {
       method: 'POST',
@@ -213,8 +213,8 @@ test('http: 超限请求体返回 413（防内存耗尽 DoS）', async () => {
     frontendDist: path.join(tmp, 'no-dist'),
     logger: { error: () => {} },
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
   try {
     const res = await fetch(`${base}/api/auth/login`, {
       method: 'POST',
@@ -261,8 +261,8 @@ test('http admin: M2 配置层全链路（鉴权 / 活动 / 分组 / 表单 / �
     frontendDist: path.join(tmp, 'no-dist'),
     logger: { error: () => {} },
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
   const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
   const post = (p, body, headers = {}) =>
     fetch(`${base}${p}`, {
@@ -365,6 +365,208 @@ test('http admin: M2 配置层全链路（鉴权 / 活动 / 分组 / 表单 / �
     assert.ok(pubDetail.data.name === 'Seminar 2026');
     const del409 = await (await del(`/api/admin/activities/${act1}`, rootH)).json();
     assert.equal(del409.code, 409);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http M3: 报名 / 候补递补 / 审核 / 通知 / 订阅 / 签到 / 提醒 全链路', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m3-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const del = (p, headers = {}) => fetch(`${base}${p}`, { method: 'DELETE', headers });
+
+  try {
+    // 注册：root / admin_a / user01 / user02 / user03
+    const regRoot = await (await post('/api/auth/register', { username: 'root', password: 'secret1234' })).json();
+    const rootUid = regRoot.data.user.uid;
+    const rootH = { authorization: `Bearer ${regRoot.data.token}` };
+    const regAdmin = await (await post('/api/auth/register', { username: 'admin_a', password: 'secret1234' })).json();
+    const adminUid = regAdmin.data.user.uid;
+    const adminH = { authorization: `Bearer ${regAdmin.data.token}` };
+    const regU1 = await (await post('/api/auth/register', { username: 'user01', password: 'secret1234', name: 'Alice' })).json();
+    const u1H = { authorization: `Bearer ${regU1.data.token}` };
+    const regU2 = await (await post('/api/auth/register', { username: 'user02', password: 'secret1234', name: 'Bob' })).json();
+    const u2H = { authorization: `Bearer ${regU2.data.token}` };
+
+    await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${rootUid}, 1, NULL);` },
+    });
+    const g = await (await post('/api/admin/groups', { name: 'M3Group' }, rootH)).json();
+    assert.equal(g.code, 0);
+    assert.equal((await (await post('/api/admin/roles/2/users', { target_uid: adminUid, group_id: g.data.group_id }, rootH)).json()).code, 0);
+
+    // 活动：need_review / allow_modify / max_slots=1；报名窗口已开；活动 30 分钟后"开始"（供提醒任务）
+    const now = Math.floor(Date.now() / 1000);
+    const act = await (await post('/api/admin/activities', {
+      name: 'M3 Workshop',
+      need_review: true,
+      allow_modify: true,
+      max_slots: 1,
+      start_time: now - 60,
+      end_time: now + 3600,
+    }, rootH)).json();
+    assert.equal(act.code, 0);
+    const act1 = act.data.activity_id;
+    assert.equal((await (await post(`/api/admin/activities/${act1}/groups/${g.data.group_id}`, {}, rootH)).json()).code, 0);
+    assert.equal((await (await put(`/api/admin/activities/${act1}`, { status: 1 }, rootH)).json()).code, 0);
+
+    // 表单 + 字段（姓名必填 min_length=2；邮箱 regex）
+    const form = await (await post(`/api/admin/activities/${act1}/forms`, { name: '报名表' }, adminH)).json();
+    assert.equal(form.code, 0);
+    const fName = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, {
+      field_key: 'student_name', field_label: '姓名', field_type: 0, is_required: true,
+      validation: '{"min_length":2}',
+    }, adminH)).json();
+    assert.equal(fName.code, 0);
+    const fEmail = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, {
+      field_key: 'email_addr', field_label: '邮箱', field_type: 0,
+      validation: '{"regex":"^[^@]+@[^@]+\\\\.com$"}',
+    }, adminH)).json();
+    assert.equal(fEmail.code, 0);
+
+    // user01 报名：创建草稿 → 保存 → 提交 → 待审核
+    const r1 = await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json();
+    assert.equal(r1.code, 0);
+    const rid1 = r1.data.registration_id;
+    assert.equal(r1.data.status, 0);
+    // 重复创建 → 409
+    assert.equal((await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json()).code, 409);
+    const fieldsOk = (name, email) => ({
+      fields: [
+        { field_id: fName.data.field_id, value: name },
+        { field_id: fEmail.data.field_id, value: email },
+      ],
+      current_step: 1,
+    });
+    assert.equal((await (await put(`/api/me/registrations/${rid1}`, fieldsOk('Alice', 'a@b.com'), u1H)).json()).code, 0);
+    const sub1 = await (await post(`/api/me/registrations/${rid1}/submit`, {}, u1H)).json();
+    assert.equal(sub1.code, 0);
+    assert.equal(sub1.data.status, 1);
+    assert.ok(sub1.data.receipt_no.includes('R'));
+
+    // user02 报名 → 满员（max_slots=1）→ 候补 queue_no=1
+    const r2 = await (await post(`/api/activities/${act1}/registration`, {}, u2H)).json();
+    assert.equal(r2.code, 0);
+    const rid2 = r2.data.registration_id;
+    assert.equal((await (await put(`/api/me/registrations/${rid2}`, fieldsOk('Bob', 'b@c.com'), u2H)).json()).code, 0);
+    const sub2 = await (await post(`/api/me/registrations/${rid2}/submit`, {}, u2H)).json();
+    assert.equal(sub2.code, 0);
+    assert.equal(sub2.data.status, 5);
+    assert.equal(sub2.data.queue_no, 1);
+
+    // 本人报名列表 / 详情
+    const mine = await (await get('/api/me/registrations', u1H)).json();
+    assert.equal(mine.code, 0);
+    assert.equal(mine.data.total, 1);
+    const det1 = await (await get(`/api/me/registrations/${rid1}`, u1H)).json();
+    assert.equal(det1.code, 0);
+    assert.equal(det1.data.items.length, 2);
+
+    // 管理名单（admin_a 在授权范围；未授权 403 在 M2 已覆盖）
+    const list = await (await get(`/api/admin/activities/${act1}/registrations`, adminH)).json();
+    assert.equal(list.code, 0);
+    assert.ok(list.data.total >= 2);
+
+    // 审核 user01 驳回 → 释放名额 → user02 同步递补为待审核（queue_no 清空）
+    assert.equal((await (await post(`/api/admin/registrations/${rid1}/review`, { approve: false, review_remark: '材料不全' }, adminH)).json()).code, 0);
+    const det2 = await (await get(`/api/me/registrations/${rid2}`, u2H)).json();
+    assert.equal(det2.code, 0);
+    assert.equal(det2.data.registration.status, 1);
+    assert.ok(det2.data.registration.queue_no === null);
+    // user01 重新提交（allow_modify）：满员（user02 待审核占唯一名额）→ 转候补
+    const resub = await (await post(`/api/me/registrations/${rid1}/submit`, {}, u1H)).json();
+    assert.equal(resub.code, 0);
+    assert.equal(resub.data.status, 5);
+    assert.equal(resub.data.queue_no, 1);
+    // 审核 user02 通过（供签到）；user01 保持候补
+    assert.equal((await (await post(`/api/admin/registrations/${rid2}/review`, { approve: true }, adminH)).json()).code, 0);
+    const det2b = await (await get(`/api/me/registrations/${rid2}`, u2H)).json();
+    assert.equal(det2b.data.registration.status, 2);
+
+    // 通知：报名成功 / 驳回 / 递补 / 审核通过
+    const notif = await (await get('/api/me/notifications', u1H)).json();
+    assert.equal(notif.code, 0);
+    assert.ok(notif.data.total >= 2);
+    const unread = await (await get('/api/me/notifications/unread-count', u1H)).json();
+    assert.equal(unread.code, 0);
+    assert.ok(unread.data.count >= 2);
+    const nid = notif.data.items[0].notification_id;
+    assert.equal((await (await put(`/api/me/notifications/${nid}/read`, {}, u1H)).json()).code, 0);
+    assert.equal((await (await put('/api/me/notifications/read-all', {}, u1H)).json()).code, 0);
+
+    // 订阅：add / 重复 409 / mine / remove
+    assert.equal((await (await post(`/api/me/subscribe/${act1}`, {}, u2H)).json()).code, 0);
+    assert.equal((await (await post(`/api/me/subscribe/${act1}`, {}, u2H)).json()).code, 409);
+    const subs = await (await get('/api/me/subscribes', u2H)).json();
+    assert.equal(subs.code, 0);
+    assert.equal(subs.data.items.length, 1);
+    assert.equal((await (await del(`/api/me/subscribe/${act1}`, u2H)).json()).code, 0);
+
+    // 签到：设置动态码密钥 + checkin_mode=2 → 主办方取码 → user02 输码签到
+    assert.equal((await (await put('/api/admin/system/config', { key: 'checkin_secret', value: 'smoke-secret-0123456789' }, rootH)).json()).code, 0);
+    assert.equal((await (await put(`/api/admin/activities/${act1}/config`, { key: 'checkin_mode', value: '2' }, adminH)).json()).code, 0);
+    // 主办方动态码（格式与权限）
+    const code = await (await get(`/api/admin/activities/${act1}/checkin-code`, adminH)).json();
+    assert.equal(code.code, 0);
+    assert.match(code.data.code, /^\d{6}$/);
+    assert.ok(code.data.expires_in > 0);
+    // 错误码 → 422；正确码 → user02 签到成功
+    assert.equal((await (await post('/api/me/checkin/code', { activity_id: act1, code: '000000' }, u2H)).json()).code, 422);
+    const code2 = await (await get(`/api/admin/activities/${act1}/checkin-code`, adminH)).json();
+    assert.equal((await (await post('/api/me/checkin/code', { activity_id: act1, code: code2.data.code }, u2H)).json()).code, 0);
+    // 管理员扫码（凭证号）→ 已签到 → 409；重复签到 409
+    assert.equal((await (await post('/api/admin/checkin/receipt', { receipt_no: sub2.data.receipt_no }, adminH)).json()).code, 409);
+    assert.equal((await (await post(`/api/admin/registrations/${rid2}/checkin`, {}, adminH)).json()).code, 409);
+
+    // 提醒任务：另建"30 分钟后开始"的活动 act2（报名窗口未开，不影响 act1 报名链路）。
+    // 其 start_time ∈ (now, now+1h) → 订阅者生成 type 2 提醒；幂等重跑不重复。
+    const { runReminders } = await import('../src/task/notify.js');
+    const u3 = await (await post('/api/auth/register', { username: 'user03', password: 'secret1234', name: 'Cara' })).json();
+    const u3H = { authorization: `Bearer ${u3.data.token}` };
+    const act2 = await (await post('/api/admin/activities', {
+      name: 'M3 Reminder Event',
+      need_review: false,
+      max_slots: 0,
+      start_time: now + 1800,
+      end_time: now + 7200,
+    }, rootH)).json();
+    assert.equal(act2.code, 0);
+    const act2id = act2.data.activity_id;
+    assert.equal((await (await put(`/api/admin/activities/${act2id}`, { status: 1 }, rootH)).json()).code, 0);
+    await (await post(`/api/me/subscribe/${act2id}`, {}, u1H)).json(); // 订阅者（u1 已在 act1 候补，不影响）
+    await (await post(`/api/me/subscribe/${act2id}`, {}, u2H)).json();
+    await (await post(`/api/me/subscribe/${act2id}`, {}, u3H)).json(); // 订阅者（未报名）
+    const r1st = await runReminders({ runtime });
+    assert.ok(r1st.sent >= 3, `首次提醒应覆盖 3 个目标（u1/u2/u3 订阅），实际 ${r1st.sent}`);
+    const r2nd = await runReminders({ runtime });
+    assert.equal(r2nd.sent, 0, '幂等：重复扫描不再生成');
+    const type2 = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT COUNT(*) AS c FROM notification WHERE type = 2;' },
+    });
+    assert.ok(type2.data.rows[0].c >= 3);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(tmp, { recursive: true, force: true });

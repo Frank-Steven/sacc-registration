@@ -12,6 +12,7 @@
 #include "core/dispatch.h"
 #include "core/util.h"
 #include "crypto/kdf.h"
+#include "data/validation.h"
 
 using nlohmann::json;
 
@@ -507,6 +508,325 @@ int main() {
 
     cdb.close();
     std::remove(cfg_path.c_str());
+  }
+
+  // ============ 报名链路（M3）：状态机 / 防超卖 / 候补递补 / 审核 / 签到 / 通知 / 订阅 ============
+  {
+    const std::string reg_path =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/sacc_reg_test.db";
+    std::remove(reg_path.c_str());
+
+    sacc::Db rdb;
+    CHECK(rdb.open(reg_path) == SQLITE_OK);
+    {
+      std::ifstream f(std::string(SACC_MIGRATIONS_DIR) + "/0001_init.sql");
+      std::stringstream ss;
+      ss << f.rdbuf();
+      CHECK(rdb.migrate(ss.str(), 1) == SQLITE_OK);
+      std::ifstream f2(std::string(SACC_MIGRATIONS_DIR) + "/0002_seed_roles.sql");
+      std::stringstream ss2;
+      ss2 << f2.rdbuf();
+      CHECK(rdb.migrate(ss2.str(), 2) == SQLITE_OK);
+      std::ifstream f3(std::string(SACC_MIGRATIONS_DIR) + "/0003_notification_activity_id.sql");
+      std::stringstream ss3;
+      ss3 << f3.rdbuf();
+      CHECK(rdb.migrate(ss3.str(), 3) == SQLITE_OK);
+    }
+
+    // 受限正则匹配器（wasm 无 std::regex）
+    CHECK(sacc::match_pattern("^1\\d{10}$", "13800138000"));
+    CHECK(!sacc::match_pattern("^1\\d{10}$", "1380013800x"));
+    CHECK(!sacc::match_pattern("^1\\d{10}$", "3800138000"));
+    CHECK(sacc::match_pattern("^[a-z]+$", "abc"));
+    CHECK(!sacc::match_pattern("^[a-z]+$", "abc123"));
+    CHECK(sacc::match_pattern("^\\d{4}-\\d{2}-\\d{2}$", "2026-08-22"));
+    CHECK(!sacc::match_pattern("^\\d{4}-\\d{2}-\\d{2}$", "2026-8-22"));
+    CHECK(sacc::match_pattern("^\\w{2,16}$", "user_01"));
+    CHECK(!sacc::match_pattern("^\\w{2,16}$", "u"));
+    CHECK(sacc::match_pattern("^[^@]+@[^@]+\\.com$", "a@b.com"));
+
+    // 用户：root 超管 / admin_a 活动管理员(g1) / 普通用户 u1-u4 / outsider
+    auto reg = [&](const char* u) -> std::int64_t {
+      json rr = invoke(rdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
+                             R"(","password":"secret1234","name":")" + u + R"("}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["uid"].get<std::int64_t>();
+    };
+    const std::int64_t root_uid = reg("root");
+    const std::int64_t admin_uid = reg("admin_a");
+    const std::int64_t u1 = reg("user01");
+    const std::int64_t u2 = reg("user02");
+    const std::int64_t u3 = reg("user03");
+    const std::int64_t u4 = reg("user04");
+    const std::int64_t outsider = reg("outsider");
+    CHECK(rdb.execParams("INSERT INTO user_role (uid, role_id, group_id) VALUES (?, 1, NULL);",
+                         nlohmann::json::array({root_uid})) == SQLITE_OK);
+    json rr = invoke(rdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(root_uid) +
+                          R"(,"name":"G1"}})");
+    const std::int64_t g1 = rr["data"]["group_id"].get<std::int64_t>();
+    CHECK(invoke(rdb, R"({"op":"user_role.grant","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"target_uid":)" + std::to_string(admin_uid) + R"(,"role_id":2,"group_id":)" +
+                      std::to_string(g1) + R"(}})")["code"] == 0);
+
+    // 活动 act：need_review / allow_modify / max_slots=2，绑 g1，发布
+    rr = invoke(rdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
+                    R"(,"name":"Workshop","need_review":true,"allow_modify":true,"max_slots":2}})");
+    const std::int64_t act = rr["data"]["activity_id"].get<std::int64_t>();
+    CHECK(invoke(rdb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(,"group_id":)" +
+                      std::to_string(g1) + R"(}})")["code"] == 0);
+    CHECK(invoke(rdb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(,"status":1}})")["code"] == 0);
+
+    // 表单 + 字段：姓名(必填 min_length=2) / 性别(单选) / 邮箱(regex) / 年龄(数字 18-100) / 爱好(多选 min_items=1)
+    rr = invoke(rdb, R"({"op":"form.create","args":{"uid":)" + std::to_string(root_uid) +
+                    R"(,"activity_id":)" + std::to_string(act) + R"(,"name":"报名表"}})");
+    const std::int64_t form = rr["data"]["form_id"].get<std::int64_t>();
+    auto mk_field = [&](const char* key, const char* label, int type, const char* extra) {
+      json f = invoke(rdb, std::string(R"({"op":"form_field.create","args":{"uid":)") +
+                           std::to_string(root_uid) + R"(,"form_id":)" + std::to_string(form) +
+                           R"(,"field_key":")" + key + R"(","field_label":")" + label +
+                           R"(","field_type":)" + std::to_string(type) + extra + R"(}})");
+      CHECK(f["code"] == 0);
+      return f["data"]["field_id"].get<std::int64_t>();
+    };
+    const std::int64_t f_name = mk_field("name", "姓名", 0, R"(,"is_required":true,"validation":"{\"min_length\":2}")");
+    const std::int64_t f_gender = mk_field("gender", "性别", 2, R"(,"options":"[\"男\",\"女\"]")");
+    const std::int64_t f_email = mk_field("email", "邮箱", 0, R"(,"validation":"{\"regex\":\"^[^@]+@[^@]+\\\\.com$\"}")");
+    const std::int64_t f_age = mk_field("age", "年龄", 1, R"(,"validation":"{\"min\":18,\"max\":100}")");
+    const std::int64_t f_hobby = mk_field("hobby", "爱好", 3, R"(,"options":"[\"篮球\",\"足球\",\"羽毛球\"]","validation":"{\"min_items\":1}")");
+    (void)f_name; (void)f_gender; (void)f_email; (void)f_age; (void)f_hobby;
+
+    auto fields_json = [&](const std::string& payload) {
+      return std::string(R"("fields":[)") + payload + R"(],"current_step":1)";
+    };
+
+    // ===== 报名（草稿 → 保存 → 提交） =====
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 0);
+    const std::int64_t r1 = rr["data"]["registration_id"].get<std::int64_t>();
+    // 重复报名 → 409
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 409);
+
+    // 草稿保存：字段正确
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"registration_id":)" + std::to_string(r1) + "," +
+                  fields_json(R"({"field_id":)" + std::to_string(f_name) + R"(,"value":"Alice"},{"field_id":)" +
+                              std::to_string(f_gender) + R"(,"value":"女"},{"field_id":)" +
+                              std::to_string(f_email) + R"(,"value":"a@b.com"},{"field_id":)" +
+                              std::to_string(f_age) + R"(,"value":20},{"field_id":)" +
+                              std::to_string(f_hobby) + R"(,"value":"[\"篮球\"]"})") + R"(}})");
+    CHECK(rr["code"] == 0);
+    // 保存不属于该活动的字段 → 422
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"registration_id":)" + std::to_string(r1) + "," +
+                  fields_json(R"({"field_id":99999,"value":"x"})") + R"(}})");
+    CHECK(rr["code"] == 422);
+
+    // 提交（need_review=1 → 待审核），生成凭证号
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 1);
+    const std::string receipt1 = rr["data"]["receipt_no"].get<std::string>();
+    CHECK(receipt1 == "R" + std::to_string(act) + "-" + std::to_string(r1));
+    // 已提交不可再提交
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 409);
+
+    // u2：缺必填姓名 → 提交 422
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    const std::int64_t r2 = rr["data"]["registration_id"].get<std::int64_t>();
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
+    CHECK(rr["code"] == 422);
+    // u2：姓名长度不足 + 错误选项 + 年龄越界 + 非法邮箱 → 422
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + "," +
+                  fields_json(R"({"field_id":)" + std::to_string(f_name) + R"(,"value":"x"},{"field_id":)" +
+                              std::to_string(f_gender) + R"(,"value":"未知"},{"field_id":)" +
+                              std::to_string(f_email) + R"(,"value":"abc"},{"field_id":)" +
+                              std::to_string(f_age) + R"(,"value":17},{"field_id":)" +
+                              std::to_string(f_hobby) + R"(,"value":"[\"排球\"]"})") + R"(}})");
+    CHECK(rr["code"] == 0);  // 保存不校验
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
+    CHECK(rr["code"] == 422);
+    // u2 修正后提交成功
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + "," +
+                  fields_json(R"({"field_id":)" + std::to_string(f_name) + R"(,"value":"Bob"},{"field_id":)" +
+                              std::to_string(f_gender) + R"(,"value":"男"},{"field_id":)" +
+                              std::to_string(f_email) + R"(,"value":"b@c.com"},{"field_id":)" +
+                              std::to_string(f_age) + R"(,"value":22},{"field_id":)" +
+                              std::to_string(f_hobby) + R"(,"value":"[\"足球\",\"羽毛球\"]"})") + R"(}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 1);
+
+    // ===== 满员 → 候补（防超卖） =====
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    const std::int64_t r3 = rr["data"]["registration_id"].get<std::int64_t>();
+    auto fill_ok_fields = [&](const char* name, const char* gender, const char* email, int age) {
+      return std::string(R"("fields":[{"field_id":)") + std::to_string(f_name) + R"(,"value":")" + name +
+             R"("},{"field_id":)" + std::to_string(f_gender) + R"(,"value":")" + gender +
+             R"("},{"field_id":)" + std::to_string(f_email) + R"(,"value":")" + email +
+             R"("},{"field_id":)" + std::to_string(f_age) + R"(,"value":)" + std::to_string(age) +
+             R"(},{"field_id":)" + std::to_string(f_hobby) + R"(,"value":"[\"篮球\"]"}],"current_step":1)";
+    };
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"registration_id":)" + std::to_string(r3) + "," + fill_ok_fields("Cara", "女", "c@d.com", 21) + R"(}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"registration_id":)" + std::to_string(r3) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 5 && rr["data"]["queue_no"] == 1);
+
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    const std::int64_t r4 = rr["data"]["registration_id"].get<std::int64_t>();
+    rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"registration_id":)" + std::to_string(r4) + "," + fill_ok_fields("Dara", "女", "d@e.com", 23) + R"(}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"registration_id":)" + std::to_string(r4) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 5 && rr["data"]["queue_no"] == 2);
+
+    // ===== 审核：u1 通过 =====
+    rr = invoke(rdb, R"({"op":"registration.review","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(,"approve":true}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 2);
+    // 非审核角色 → 403；非待审核 → 409
+    rr = invoke(rdb, R"({"op":"registration.review","args":{"uid":)" + std::to_string(outsider) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(,"approve":true}})");
+    CHECK(rr["code"] == 403);
+    rr = invoke(rdb, R"({"op":"registration.review","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(,"approve":true}})");
+    CHECK(rr["code"] == 409);
+
+    // ===== 取消 u2（待审核占名额）→ 释放 → u3 递补为待审核 =====
+    rr = invoke(rdb, R"({"op":"registration.cancel","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(rdb, R"({"op":"registration.detail","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"registration_id":)" + std::to_string(r3) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["registration"]["status"] == 1);
+    CHECK(rr["data"]["registration"]["queue_no"].is_null());
+    // 已取消记录复用：u2 重新报名 → 新草稿
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u2) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["registration_id"] == r2 && rr["data"]["status"] == 0);
+
+    // ===== 审核驳回 u3 → 释放 → u4 递补；驳回写 remark =====
+    rr = invoke(rdb, R"({"op":"registration.review","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r3) + R"(,"approve":false,"review_remark":"材料不全"}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 3);
+    rr = invoke(rdb, R"({"op":"registration.detail","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"registration_id":)" + std::to_string(r4) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["registration"]["status"] == 1);
+
+    // u3 重新提交：满员（u1 通过 + u4 待审核占满 2 名额）→ 转候补
+    rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u3) +
+                  R"(,"registration_id":)" + std::to_string(r3) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 5);
+
+    // ===== 管理名单 / 详情 / 关键词过滤 =====
+    rr = invoke(rdb, R"({"op":"registration.admin_list","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] >= 4);
+    rr = invoke(rdb, R"({"op":"registration.admin_list","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(,"status":5}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 1);
+    rr = invoke(rdb, R"({"op":"registration.admin_detail","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 5);
+    rr = invoke(rdb, R"({"op":"registration.admin_list","args":{"uid":)" + std::to_string(outsider) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 403);
+    // 本人视角 detail / mine
+    rr = invoke(rdb, R"({"op":"registration.detail","args":{"uid":)" + std::to_string(outsider) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 403);
+    rr = invoke(rdb, R"({"op":"registration.mine","args":{"uid":)" + std::to_string(u1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] == 1);
+
+    // ===== 通知：报名 / 候补 / 递补 / 审核结果 =====
+    rr = invoke(rdb, R"({"op":"notification.mine","args":{"uid":)" + std::to_string(u1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["total"] >= 2);  // 报名成功 + 审核通过
+    rr = invoke(rdb, R"({"op":"notification.unread_count","args":{"uid":)" + std::to_string(u1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["count"] >= 2);
+    const std::int64_t nid = rr["code"] == 0 && rr["data"]["count"] > 0
+                                 ? invoke(rdb, R"({"op":"notification.mine","args":{"uid":)" +
+                                                 std::to_string(u1) + R"(}})")["data"]["items"][0]
+                                       ["notification_id"]
+                                       .get<std::int64_t>()
+                                 : 0;
+    CHECK(invoke(rdb, R"({"op":"notification.read","args":{"uid":)" + std::to_string(u1) +
+                      R"(,"notification_id":)" + std::to_string(nid) + R"(}})")["code"] == 0);
+    rr = invoke(rdb, R"({"op":"notification.unread_count","args":{"uid":)" + std::to_string(u1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["count"] >= 1);
+    CHECK(invoke(rdb, R"({"op":"notification.read_all","args":{"uid":)" + std::to_string(u1) + R"(}})")["code"] == 0);
+    CHECK(invoke(rdb, R"({"op":"notification.read","args":{"uid":)" + std::to_string(u1) +
+                      R"(,"notification_id":99999}})")["code"] == 404);
+
+    // ===== 签到 =====
+    // 现场模式（默认 0）：线上自助 409
+    rr = invoke(rdb, R"({"op":"checkin.mine","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 409);
+    // 管理员扫码（按凭证号）
+    rr = invoke(rdb, R"({"op":"checkin.do","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"receipt_no":")" + receipt1 + R"("}})");
+    CHECK(rr["code"] == 0 && rr["data"]["checkin_time"] > 0);
+    // 重复签到 → 409
+    rr = invoke(rdb, R"({"op":"checkin.do","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
+    CHECK(rr["code"] == 409);
+
+    // 动态码签到：设置密钥 + checkin_mode=2
+    rr = invoke(rdb, R"({"op":"system_config.set","args":{"uid":)" + std::to_string(root_uid) +
+                  R"(,"key":"checkin_secret","value":"unit-test-secret-0123456789"}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(rdb, R"({"op":"activity_config.set","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(,"key":"checkin_mode","value":2}})");
+    CHECK(rr["code"] == 0);
+    // 主办方获取当前码（管理员/审核员权限；outsider 403）
+    rr = invoke(rdb, R"({"op":"checkin.code_current","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["code"].get_ref<const std::string&>().size() == 6 &&
+          rr["data"]["expires_in"] > 0);
+    const std::string dyn_code = rr["data"]["code"].get<std::string>();
+    CHECK(invoke(rdb, R"({"op":"checkin.code_current","args":{"uid":)" + std::to_string(outsider) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(}})")["code"] == 403);
+    // u4 审核通过（已通过未签到），供动态码签到
+    rr = invoke(rdb, R"({"op":"registration.review","args":{"uid":)" + std::to_string(admin_uid) +
+                  R"(,"registration_id":)" + std::to_string(r4) + R"(,"approve":true}})");
+    CHECK(rr["code"] == 0 && rr["data"]["status"] == 2);
+    // 错误码 → 422；正确码 → 签到成功；重复 → 409
+    rr = invoke(rdb, R"({"op":"checkin.code","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(,"code":"000000"}})");
+    CHECK(rr["code"] == 422);
+    rr = invoke(rdb, R"({"op":"checkin.code","args":{"uid":)" + std::to_string(u4) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(,"code":")" + dyn_code + R"("}})");
+    CHECK(rr["code"] == 0);
+
+    // ===== 订阅 =====
+    CHECK(invoke(rdb, R"({"op":"subscribe.add","args":{"uid":)" + std::to_string(u2) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(}})")["code"] == 0);
+    CHECK(invoke(rdb, R"({"op":"subscribe.add","args":{"uid":)" + std::to_string(u2) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(}})")["code"] == 409);
+    rr = invoke(rdb, R"({"op":"subscribe.mine","args":{"uid":)" + std::to_string(u2) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1);
+    CHECK(invoke(rdb, R"({"op":"subscribe.remove","args":{"uid":)" + std::to_string(u2) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(}})")["code"] == 0);
+
+    rdb.close();
+    std::remove(reg_path.c_str());
   }
 
   std::remove(db_path.c_str());

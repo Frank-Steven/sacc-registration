@@ -19,6 +19,12 @@ add_executable(backend_wasm
   ${SACC_SOURCES_DIR}/src/config/template.cpp
   ${SACC_SOURCES_DIR}/src/config/config.cpp
   ${SACC_SOURCES_DIR}/src/config/role.cpp
+  ${SACC_SOURCES_DIR}/src/data/registration.cpp
+  ${SACC_SOURCES_DIR}/src/data/validation.cpp
+  ${SACC_SOURCES_DIR}/src/data/review.cpp
+  ${SACC_SOURCES_DIR}/src/data/checkin.cpp
+  ${SACC_SOURCES_DIR}/src/data/notification.cpp
+  ${SACC_SOURCES_DIR}/src/data/subscribe.cpp
   ${SACC_SOURCES_DIR}/third_party/sqlite/sqlite3.c
 )
 
@@ -39,7 +45,11 @@ target_compile_definitions(backend_wasm PRIVATE
 set_target_properties(backend_wasm PROPERTIES OUTPUT_NAME backend SUFFIX ".wasm")
 
 # reactor 模式（无 _start，仅导出 ABI 函数）
+# 栈显式扩到 1MB：默认 wasm-ld 栈仅 64KB，字段校验正则递归（validation.cpp 深度上限 4000）
+# 需要更大栈空间，防止合法长文本触发 wasm trap
 target_link_options(backend_wasm PRIVATE
   -mexec-model=reactor
+  -Wl,-z,stack-size=1048576
+  -Wl,--initial-memory=2097152
   -Wl,--export=wasm_alloc,--export=wasm_free,--export=wasm_version,--export=wasm_invoke
 )

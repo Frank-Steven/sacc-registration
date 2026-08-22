@@ -75,6 +75,15 @@ export function runRetention(dir, { keepRecent = 7, keepDays = 30, now = new Dat
 }
 
 // 执行一次备份：checkpoint → db.backup → 校验 → 保留清理
+/**
+ * @param {object} opts
+ * @param {import('../wasm-runtime/runtime.js').WasmRuntime} opts.runtime
+ * @param {string} [opts.wasmPath]
+ * @param {string} opts.dbPath
+ * @param {boolean} [opts.verify]
+ * @param {number} [opts.expectedVersion]
+ * @returns {Promise<string>}
+ */
 export async function createBackup({ runtime, wasmPath, dbPath, verify = true, expectedVersion }) {
   const dir = path.join(path.dirname(dbPath), 'backup');
   fs.mkdirSync(dir, { recursive: true });
