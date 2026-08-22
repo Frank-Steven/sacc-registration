@@ -1067,6 +1067,183 @@ int main() {
     std::remove(exp_path.c_str());
   }
 
+  // ============ 用户资料 / 报名端补齐（M5）：user.update、常用信息、通知偏好、公开树、公开列表/详情 ============
+  {
+    const std::string m5_path =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/sacc_m5_test.db";
+    std::remove(m5_path.c_str());
+    sacc::Db mdb;
+    CHECK(mdb.open(m5_path) == SQLITE_OK);
+    {
+      std::ifstream f(std::string(SACC_MIGRATIONS_DIR) + "/0001_init.sql");
+      std::stringstream ss;
+      ss << f.rdbuf();
+      CHECK(mdb.migrate(ss.str(), 1) == SQLITE_OK);
+      std::ifstream f2(std::string(SACC_MIGRATIONS_DIR) + "/0002_seed_roles.sql");
+      std::stringstream ss2;
+      ss2 << f2.rdbuf();
+      CHECK(mdb.migrate(ss2.str(), 2) == SQLITE_OK);
+    }
+
+    auto mreg = [&](const char* u) -> std::int64_t {
+      json rr = invoke(mdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
+                             R"(","password":"secret1234","name":")" + u + R"("}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["uid"].get<std::int64_t>();
+    };
+    const std::int64_t m_root = mreg("root5");
+    const std::int64_t m_user = mreg("user15");
+    CHECK(mdb.execParams("INSERT INTO user_role (uid, role_id, group_id) VALUES (?, 1, NULL);",
+                         nlohmann::json::array({m_root})) == SQLITE_OK);
+
+    // ---- user.update：基础资料修改与校验 ----
+    json rr = invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"name":"新名字","student_id":"20260001","email":"new@example.com"}})");
+    CHECK(rr["code"] == 0);
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["name"] == "新名字" && rr["data"]["student_id"] == "20260001");
+    // 非法邮箱 → 422
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"email":"bad-email"}})")["code"] == 422);
+    // 未登录 → 403
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":0}})")["code"] == 403);
+
+    // ---- user_common_info：save 幂等 upsert / list / delete ----
+    CHECK(invoke(mdb, R"({"op":"user_common_info.save","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"field_key":"student_name","field_label":"姓名","field_value":"张三"}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_common_info.save","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"field_key":"student_name","field_label":"姓名","field_value":"李四"}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"user_common_info.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 &&
+          rr["data"]["items"][0]["field_value"] == "李四");  // upsert 覆盖
+    // 非法 key（含大写/特殊字符）→ 422
+    CHECK(invoke(mdb, R"({"op":"user_common_info.save","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"field_key":"Bad Key!","field_value":"x"}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_common_info.delete","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"field_key":"student_name"}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_common_info.delete","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"field_key":"student_name"}})")["code"] == 404);
+    // 本人隔离：他人看不到
+    CHECK(invoke(mdb, R"({"op":"user_common_info.save","args":{"uid":)" + std::to_string(m_root) +
+                      R"(,"field_key":"k1","field_value":"v1"}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"user_common_info.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].empty());
+
+    // ---- user_notify_pref：set upsert / list / delete 恢复默认 ----
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1,"channel":1}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1,"channel":0}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"user_notify_pref.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 &&
+          rr["data"]["items"][0]["channel"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":9,"channel":0}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1,"channel":2}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.delete","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.delete","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1}})")["code"] == 404);
+
+    // ---- group.public_tree：嵌套树 + 软删过滤 ----
+    rr = invoke(mdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(m_root) +
+                    R"(,"name":"校级"}})");
+    const std::int64_t g1 = rr["data"]["group_id"].get<std::int64_t>();
+    rr = invoke(mdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(m_root) +
+                    R"(,"name":"学院","parent_id":)" + std::to_string(g1) + R"(}})");
+    const std::int64_t g2 = rr["data"]["group_id"].get<std::int64_t>();
+    rr = invoke(mdb, R"({"op":"group.public_tree"})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1);
+    CHECK(rr["data"]["items"][0]["group_id"] == g1);
+    CHECK(rr["data"]["items"][0]["children"].size() == 1);
+    CHECK(rr["data"]["items"][0]["children"][0]["group_id"] == g2);
+    // 软删子树后公开树过滤
+    CHECK(invoke(mdb, R"({"op":"group.delete","args":{"uid":)" + std::to_string(m_root) +
+                      R"(,"group_id":)" + std::to_string(g2) + R"(}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"group.public_tree"})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 &&
+          rr["data"]["items"][0]["children"].empty());
+
+    // ---- 报名端公开列表/详情（B1/B2）：taken、分组筛选、分页、forms 补齐 ----
+    rr = invoke(mdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(m_root) +
+                    R"(,"name":"M5 活动","max_slots":1,"group_ids":[)" + std::to_string(g1) +
+                    R"(]}})");
+    const std::int64_t act = rr["data"]["activity_id"].get<std::int64_t>();
+    rr = invoke(mdb, R"({"op":"form.create","args":{"uid":)" + std::to_string(m_root) +
+                    R"(,"activity_id":)" + std::to_string(act) + R"(,"name":"报名表"}})");
+    const std::int64_t form_id = rr["data"]["form_id"].get<std::int64_t>();
+    rr = invoke(mdb, R"({"op":"form_field.create","args":{"uid":)" + std::to_string(m_root) +
+                    R"(,"form_id":)" + std::to_string(form_id) +
+                    R"(,"field_key":"phone_x","field_label":"手机","field_type":0}})");
+    const std::int64_t fid = rr["data"]["field_id"].get<std::int64_t>();
+    CHECK(invoke(mdb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(m_root) +
+                      R"(,"activity_id":)" + std::to_string(act) + R"(,"status":1}})")["code"] == 0);
+
+    // 发布后公开详情含 forms（含字段定义，B1）
+    rr = invoke(mdb, R"({"op":"activity.public_detail","args":{"activity_id":)" +
+                  std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 0);
+    CHECK(rr["data"]["forms"].size() == 1 && rr["data"]["forms"][0]["fields"].size() == 1 &&
+          rr["data"]["forms"][0]["fields"][0]["field_id"] == fid);
+
+    // taken：报名提交后=1（need_review 默认 false → status 2 占名额）
+    json c = invoke(mdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(m_user) +
+                        R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    const std::int64_t rid = c["data"]["registration_id"].get<std::int64_t>();
+    CHECK(invoke(mdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"registration_id":)" + std::to_string(rid) + R"(,"fields":[{"field_id":)" +
+                      std::to_string(fid) + R"(,"value":"13800000000"}],"current_step":1}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"registration_id":)" + std::to_string(rid) + R"(}})")["code"] == 0);
+
+    rr = invoke(mdb, R"({"op":"activity.public_list"})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 &&
+          rr["data"]["items"][0]["taken"] == 1 && rr["data"]["total"] == 1);
+    // 分组筛选（B2）：活动绑 g1，选 g1 命中
+    rr = invoke(mdb, R"({"op":"activity.public_list","args":{"group_id":)" + std::to_string(g1) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1);
+    // 分页（B2）
+    rr = invoke(mdb, R"({"op":"activity.public_list","args":{"page":2,"page_size":1}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].empty() && rr["data"]["total"] == 1);
+    // 关键字筛选
+    rr = invoke(mdb, R"({"op":"activity.public_list","args":{"keyword":"不存在"}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].empty());
+
+    // ---- registration.mine 状态筛选（修复参数错位 bug 的回归）----
+    rr = invoke(mdb, R"({"op":"registration.mine","args":{"uid":)" + std::to_string(m_user) +
+                  R"(,"status":2}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 && rr["data"]["total"] == 1);
+
+    // ---- user_pref：界面偏好 set upsert / list / 422 / 本人隔离 ----
+    {
+      std::ifstream f6(std::string(SACC_MIGRATIONS_DIR) + "/0006_user_pref.sql");
+      std::stringstream ss6;
+      ss6 << f6.rdbuf();
+      CHECK(mdb.migrate(ss6.str(), 6) == SQLITE_OK);
+    }
+    CHECK(invoke(mdb, R"({"op":"user_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"pref_key":"theme","pref_value":"dark"}})")["code"] == 0);
+    CHECK(invoke(mdb, R"({"op":"user_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"pref_key":"theme","pref_value":"light"}})")["code"] == 0);  // 覆盖
+    CHECK(invoke(mdb, R"({"op":"user_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"pref_key":"locale","pref_value":"en"}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"user_pref.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 2 &&
+          rr["data"]["items"][0]["pref_key"] == "locale" && rr["data"]["items"][0]["pref_value"] == "en" &&
+          rr["data"]["items"][1]["pref_value"] == "light");
+    // 非法 pref_key（含大写）→ 422；未登录 → 403
+    CHECK(invoke(mdb, R"({"op":"user_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"pref_key":"Theme","pref_value":"dark"}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_pref.set","args":{"uid":0,"pref_key":"theme","pref_value":"dark"}})")["code"] == 403);
+    // 本人隔离：root 无任何偏好
+    rr = invoke(mdb, R"({"op":"user_pref.list","args":{"uid":)" + std::to_string(m_root) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"].empty());
+
+    mdb.close();
+    std::remove(m5_path.c_str());
+  }
+
   std::remove(db_path.c_str());
 
   if (failures == 0) {

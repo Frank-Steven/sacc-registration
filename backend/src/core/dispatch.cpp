@@ -18,6 +18,7 @@
 #include "data/review.h"
 #include "data/subscribe.h"
 #include "user/auth.h"
+#include "user/profile.h"
 
 namespace sacc {
 
@@ -141,6 +142,7 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "group.update") return group_update(db, args);
     if (op == "group.delete") return group_delete(db, args);
     if (op == "group.tree") return group_tree(db, args);
+    if (op == "group.public_tree") return group_public_tree(db, args);  // M5 B3 公开分组树
     if (op == "activity_group.bind") return activity_group_bind(db, args);
     if (op == "activity_group.unbind") return activity_group_unbind(db, args);
     if (op == "activity_group.list") return activity_group_list(db, args);
@@ -204,6 +206,20 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "subscribe.add") return subscribe_add(db, args);
     if (op == "subscribe.remove") return subscribe_remove(db, args);
     if (op == "subscribe.mine") return subscribe_mine(db, args);
+  }
+  // 用户资料（M5，本人维度，uid 由宿主 JWT 注入）：基础资料 / 常用信息 / 通知偏好 / 界面偏好
+  if (op == "user.update" || op.rfind("user_common_info.", 0) == 0 ||
+      op.rfind("user_notify_pref.", 0) == 0 || op.rfind("user_pref.", 0) == 0) {
+    if (!db.isOpen()) return err(kDbError, "db not open");
+    if (op == "user.update") return user_update(db, args);
+    if (op == "user_common_info.list") return user_common_info_list(db, args);
+    if (op == "user_common_info.save") return user_common_info_save(db, args);
+    if (op == "user_common_info.delete") return user_common_info_delete(db, args);
+    if (op == "user_notify_pref.list") return user_notify_pref_list(db, args);
+    if (op == "user_notify_pref.set") return user_notify_pref_set(db, args);
+    if (op == "user_notify_pref.delete") return user_notify_pref_delete(db, args);
+    if (op == "user_pref.list") return user_pref_list(db, args);
+    if (op == "user_pref.set") return user_pref_set(db, args);
   }
   return err(kUnknownOp, "unknown op: " + op);
 }

@@ -164,6 +164,12 @@ export function createRoutes({ runtime, config }) {
       handler: (ctx) =>
         runtime.invoke({ op: 'activity.public_detail', args: { activity_id: Number(ctx.params.id) } }),
     },
+    // 报名端公开分组树（M5 B3：活动大厅左侧筛选）
+    {
+      method: 'GET',
+      pattern: '/api/groups/tree',
+      handler: () => runtime.invoke({ op: 'group.public_tree' }),
+    },
 
     // ---------- 报名端本人（M3：报名 / 签到 / 通知 / 订阅，需 Bearer token） ----------
     {
@@ -185,6 +191,40 @@ export function createRoutes({ runtime, config }) {
     { method: 'POST', pattern: '/api/me/subscribe/:activityId', handler: admin('subscribe.add', { activity_id: 'activityId' }) },
     { method: 'DELETE', pattern: '/api/me/subscribe/:activityId', handler: admin('subscribe.remove', { activity_id: 'activityId' }) },
     { method: 'GET', pattern: '/api/me/subscribes', handler: admin('subscribe.mine') },
+
+    // ---------- 报名端本人资料（M5 B4~B6：基础资料 / 常用信息 / 通知偏好） ----------
+    { method: 'PUT', pattern: '/api/me/profile', handler: admin('user.update') },
+    { method: 'GET', pattern: '/api/me/common-info', handler: admin('user_common_info.list') },
+    { method: 'PUT', pattern: '/api/me/common-info', handler: admin('user_common_info.save') },
+    {
+      method: 'DELETE',
+      pattern: '/api/me/common-info',
+      handler: async (ctx) => {
+        const auth = requireAuth(ctx, config);
+        if (!auth) return { code: Errors.UNAUTHORIZED, message: '未登录或会话已过期' };
+        const key = ctx.query.get('key');
+        if (!key) return { code: Errors.VALIDATION, message: '缺少 key 参数' };
+        return runtime.invoke({ op: 'user_common_info.delete', args: { uid: auth.uid, field_key: key } });
+      },
+    },
+    { method: 'GET', pattern: '/api/me/notify-prefs', handler: admin('user_notify_pref.list') },
+    { method: 'PUT', pattern: '/api/me/notify-prefs', handler: admin('user_notify_pref.set') },
+    {
+      method: 'DELETE',
+      pattern: '/api/me/notify-prefs',
+      handler: async (ctx) => {
+        const auth = requireAuth(ctx, config);
+        if (!auth) return { code: Errors.UNAUTHORIZED, message: '未登录或会话已过期' };
+        const t = Number(ctx.query.get('type'));
+        if (!Number.isInteger(t) || t < 0 || t > 3) {
+          return { code: Errors.VALIDATION, message: 'type 须为 0~3' };
+        }
+        return runtime.invoke({ op: 'user_notify_pref.delete', args: { uid: auth.uid, notify_type: t } });
+      },
+    },
+    // 界面偏好（theme/locale 服务端持久化，登录后跨设备同步）
+    { method: 'GET', pattern: '/api/me/prefs', handler: admin('user_pref.list') },
+    { method: 'PUT', pattern: '/api/me/prefs', handler: admin('user_pref.set') },
 
     // ---------- 管理端（M3：报名名单 / 审核 / 签到 / 动态码） ----------
     { method: 'GET', pattern: '/api/admin/activities/:id/registrations', handler: admin('registration.admin_list', { activity_id: 'id' }) },

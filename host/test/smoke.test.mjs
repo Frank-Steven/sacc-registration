@@ -47,13 +47,14 @@ test('migrations: 空库初始化为最新版本并建全部表', async () => {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 5);
+    assert.equal(version, 6);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
     for (const t of ['account', 'user', 'activity', 'form', 'form_field', 'group',
       'activity_group', 'activity_config', 'system_config', 'form_template', 'audit_log',
-      'registration', 'registration_data', 'notification', 'subscribe', 'user_role']) {
+      'registration', 'registration_data', 'notification', 'subscribe', 'user_role',
+      'user_pref']) {
       assert.ok(tables.data.tables.includes(t), `缺少表 ${t}`);
     }
   } finally {
@@ -68,8 +69,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 5);
-    assert.equal(v2, 5);
+    assert.equal(v1, 6);
+    assert.equal(v2, 6);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -224,6 +225,149 @@ test('http: 超限请求体返回 413（防内存耗尽 DoS）', async () => {
     assert.equal(res.status, 413);
     const json = await res.json();
     assert.equal(json.code, 413);
+  } finally {
+    // 413 场景服务端 req.destroy() 后，Node 22 的连接表可能残留 keep-alive 连接，
+    // 导致 server.close() 回调不触发（CI 的 ERR_TEST_FAILURE）。强制关闭全部连接兜底。
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http M5: 报名端补齐（公开分组树 / 列表 taken+分组 / 详情 forms / 资料 CRUD）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m5-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const del = (p, headers = {}) => fetch(`${base}${p}`, { method: 'DELETE', headers });
+
+  try {
+    // 注册：root 超管 / user01
+    const regRoot = await (await post('/api/auth/register', { username: 'root', password: 'secret1234' })).json();
+    const rootUid = regRoot.data.user.uid;
+    const rootH = { authorization: `Bearer ${regRoot.data.token}` };
+    const regU1 = await (await post('/api/auth/register', { username: 'user01', password: 'secret1234', name: '张三' })).json();
+    const u1H = { authorization: `Bearer ${regU1.data.token}` };
+    await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${rootUid}, 1, NULL);` },
+    });
+
+    // B3：公开分组树（嵌套）
+    const g = await (await post('/api/admin/groups', { name: '校级' }, rootH)).json();
+    assert.equal(g.code, 0);
+    const g1 = g.data.group_id;
+    const g2 = await (await post('/api/admin/groups', { name: '学院', parent_id: g1 }, rootH)).json();
+    assert.equal(g2.code, 0);
+    const tree = await (await get('/api/groups/tree')).json();
+    assert.equal(tree.code, 0);
+    assert.equal(tree.data.items.length, 1);
+    assert.equal(tree.data.items[0].children.length, 1);
+    assert.equal(tree.data.items[0].children[0].group_id, g2.data.group_id);
+
+    // 活动 + 表单字段 + 发布
+    const act = await (await post('/api/admin/activities', { name: 'M5 Expo', max_slots: 1, group_ids: [g1] }, rootH)).json();
+    assert.equal(act.code, 0);
+    const act1 = act.data.activity_id;
+    const form = await (await post(`/api/admin/activities/${act1}/forms`, { name: '报名表' }, rootH)).json();
+    assert.equal(form.code, 0);
+    const field = await (await post(`/api/admin/forms/${form.data.form_id}/fields`, { field_key: 'phone_x', field_label: '手机', field_type: 0 }, rootH)).json();
+    assert.equal(field.code, 0);
+    assert.equal((await (await put(`/api/admin/activities/${act1}`, { status: 1 }, rootH)).json()).code, 0);
+
+    // B1：公开详情含 forms（含字段定义）
+    const pubDetail = await (await get(`/api/activities/${act1}`)).json();
+    assert.equal(pubDetail.code, 0);
+    assert.equal(pubDetail.data.forms.length, 1);
+    assert.equal(pubDetail.data.forms[0].fields.length, 1);
+    assert.equal(pubDetail.data.forms[0].fields[0].field_id, field.data.field_id);
+
+    // B2：公开列表 taken + 分组筛选 + 分页
+    let pub = await (await get('/api/activities')).json();
+    assert.equal(pub.code, 0);
+    assert.equal(pub.data.items.length, 1);
+    assert.equal(pub.data.items[0].taken, 0);
+    const withGroup = await (await get(`/api/activities?group_id=${g1}`)).json();
+    assert.equal(withGroup.code, 0);
+    assert.equal(withGroup.data.items.length, 1);
+    const page2 = await (await get('/api/activities?page=2&page_size=1')).json();
+    assert.equal(page2.code, 0);
+    assert.equal(page2.data.items.length, 0);
+    assert.equal(page2.data.total, 1);
+
+    // 报名提交 → taken=1
+    const rid = (await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json()).data.registration_id;
+    assert.equal((await (await put(`/api/me/registrations/${rid}`, { fields: [{ field_id: field.data.field_id, value: '13800000000' }], current_step: 1 }, u1H)).json()).code, 0);
+    assert.equal((await (await post(`/api/me/registrations/${rid}/submit`, {}, u1H)).json()).code, 0);
+    pub = await (await get('/api/activities')).json();
+    assert.equal(pub.data.items[0].taken, 1);
+
+    // 未登录访问资料接口 → 401
+    assert.equal((await get('/api/me/common-info')).status, 401);
+
+    // B4：基础资料更新
+    assert.equal((await (await put('/api/me/profile', { name: '李四', email: 'new@example.com' }, u1H)).json()).code, 0);
+    const me = await (await get('/api/auth/me', u1H)).json();
+    assert.equal(me.data.name, '李四');
+    assert.equal((await (await put('/api/me/profile', { email: 'bad' }, u1H)).json()).code, 422);
+
+    // B5：常用信息增删改
+    assert.equal((await (await put('/api/me/common-info', { field_key: 'student_name', field_label: '姓名', field_value: '张三' }, u1H)).json()).code, 0);
+    assert.equal((await (await put('/api/me/common-info', { field_key: 'student_name', field_label: '姓名', field_value: '李四' }, u1H)).json()).code, 0);
+    const ci = await (await get('/api/me/common-info', u1H)).json();
+    assert.equal(ci.code, 0);
+    assert.equal(ci.data.items.length, 1);
+    assert.equal(ci.data.items[0].field_value, '李四');
+    assert.equal((await (await del('/api/me/common-info?key=student_name', u1H)).json()).code, 0);
+    assert.equal((await (await del('/api/me/common-info?key=student_name', u1H)).json()).code, 404);
+
+    // B6：通知偏好增删改
+    assert.equal((await (await put('/api/me/notify-prefs', { notify_type: 1, channel: 1 }, u1H)).json()).code, 0);
+    const prefs = await (await get('/api/me/notify-prefs', u1H)).json();
+    assert.equal(prefs.code, 0);
+    assert.equal(prefs.data.items.length, 1);
+    assert.equal(prefs.data.items[0].channel, 1);
+    assert.equal((await (await del('/api/me/notify-prefs?type=1', u1H)).json()).code, 0);
+    assert.equal((await (await del('/api/me/notify-prefs?type=9', u1H)).json()).code, 422);
+
+    // 本人隔离：user01 的资料对 root 不可见（root 无该条）
+    const rootCi = await (await get('/api/me/common-info', rootH)).json();
+    assert.equal(rootCi.code, 0);
+    assert.equal(rootCi.data.items.length, 0);
+
+    // 界面偏好：set upsert / list / 未登录 401 / 本人隔离
+    assert.equal((await (await put('/api/me/prefs', { pref_key: 'theme', pref_value: 'dark' }, u1H)).json()).code, 0);
+    assert.equal((await (await put('/api/me/prefs', { pref_key: 'theme', pref_value: 'light' }, u1H)).json()).code, 0);
+    assert.equal((await (await put('/api/me/prefs', { pref_key: 'locale', pref_value: 'en' }, u1H)).json()).code, 0);
+    const myPrefs = await (await get('/api/me/prefs', u1H)).json();
+    assert.equal(myPrefs.code, 0);
+    assert.equal(myPrefs.data.items.length, 2);
+    assert.equal(myPrefs.data.items[0].pref_value, 'en');
+    // 非法 pref_key → 422；未登录 → 401
+    assert.equal((await (await put('/api/me/prefs', { pref_key: 'Theme', pref_value: 'dark' }, u1H)).json()).code, 422);
+    assert.equal((await (await get('/api/me/prefs')).json()).code, 401);
+    // 本人隔离：root 看不到 user01 的偏好
+    const rootPrefs = await (await get('/api/me/prefs', rootH)).json();
+    assert.equal(rootPrefs.code, 0);
+    assert.equal(rootPrefs.data.items.length, 0);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(tmp, { recursive: true, force: true });

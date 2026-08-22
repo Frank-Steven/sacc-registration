@@ -1,5 +1,6 @@
 #include "config/group.h"
 
+#include <map>
 #include <sqlite3.h>
 
 #include "config/authz.h"
@@ -134,6 +135,43 @@ nlohmann::json group_tree(Db& db, const nlohmann::json& args) {
     return cfg_err(kDbError, "query failed: " + qerr);
   }
   return cfg_ok({{"items", std::move(rows)}});
+}
+
+nlohmann::json group_public_tree(Db& db, const nlohmann::json& args) {
+  (void)args;  // 公开接口，无鉴权
+  nlohmann::json rows;
+  std::string qerr;
+  // 仅未软删分组；扁平按 parent_id, sort_order 排序（父必先于子，组树构建前提）
+  if (db.query("SELECT group_id, parent_id, name FROM \"group\" WHERE is_deleted = 0 "
+               "ORDER BY parent_id, sort_order, group_id;",
+               nullptr, rows, qerr) != SQLITE_OK) {
+    return cfg_err(kDbError, "query failed: " + qerr);
+  }
+  nlohmann::json nodes = nlohmann::json::array();
+  std::map<std::int64_t, std::size_t> idx;
+  for (const auto& r : rows) {
+    idx[r.value("group_id", 0)] = nodes.size();
+    nodes.push_back({
+        {"group_id", r.value("group_id", 0)},
+        {"parent_id", r["parent_id"].is_null() ? nlohmann::json(nullptr)
+                                               : nlohmann::json(r.value("parent_id", 0))},
+        {"name", r.value("name", "")},
+        {"children", nlohmann::json::array()},
+    });
+  }
+  // 逆序遍历：先组装后代，挂接父节点时 children 已完整
+  nlohmann::json roots = nlohmann::json::array();
+  for (std::size_t i = nodes.size(); i-- > 0;) {
+    const std::int64_t pid =
+        nodes[i]["parent_id"].is_null() ? 0 : nodes[i]["parent_id"].get<std::int64_t>();
+    const auto it = idx.find(pid);
+    if (pid != 0 && it != idx.end()) {
+      nodes[it->second]["children"].push_back(std::move(nodes[i]));
+    } else {
+      roots.push_back(std::move(nodes[i]));  // 根节点 / 孤儿（父被软删）提升为根
+    }
+  }
+  return cfg_ok({{"items", std::move(roots)}});
 }
 
 nlohmann::json activity_group_bind(Db& db, const nlohmann::json& args) {

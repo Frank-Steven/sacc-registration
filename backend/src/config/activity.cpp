@@ -344,31 +344,65 @@ nlohmann::json activity_delete(Db& db, const nlohmann::json& args) {
 }
 
 nlohmann::json activity_public_list(Db& db, const nlohmann::json& args) {
-  // 报名端：仅进行中且未过期（config.md 3.1）
+  // 报名端：仅进行中且未过期（config.md 3.1）；M5 B2：分组筛选 + 名额进度 + 分页
   const std::int64_t now = now_ts();
+  const std::int64_t page = std::max<std::int64_t>(cfg_int(args, "page", 1), 1);
+  const std::int64_t page_size =
+      std::min<std::int64_t>(std::max<std::int64_t>(cfg_int(args, "page_size", 50), 1), 100);
   nlohmann::json params = nlohmann::json::array();
-  std::string where = "status = 1 AND is_deleted = 0 AND (start_time = 0 OR start_time <= ?) "
-                      "AND (end_time = 0 OR end_time > ?)";
+  std::string where =
+      "a.status = 1 AND a.is_deleted = 0 AND (a.start_time = 0 OR a.start_time <= ?) "
+      "AND (a.end_time = 0 OR a.end_time > ?)";
   params.push_back(now);
   params.push_back(now);
   if (args.contains("activity_type") && cfg_int(args, "activity_type", -1) >= 0) {
-    where += " AND activity_type = ?";
+    where += " AND a.activity_type = ?";
     params.push_back(cfg_int(args, "activity_type", 0));
   }
   const std::string keyword = cfg_str(args, "keyword");
   if (!keyword.empty()) {
-    where += " AND name LIKE ?";
+    where += " AND a.name LIKE ?";
     params.push_back("%" + keyword + "%");
   }
-  nlohmann::json rows;
+  // 分组筛选：选中分组及其全部子分组（嵌套树，仅未软删）
+  if (cfg_int(args, "group_id", 0) > 0) {
+    where +=
+        " AND EXISTS ("
+        "  WITH RECURSIVE sub(gid) AS ("
+        "    SELECT ?"
+        "    UNION ALL"
+        "    SELECT g.group_id FROM \"group\" g JOIN sub s ON g.parent_id = s.gid"
+        "      AND g.is_deleted = 0"
+        "  )"
+        "  SELECT 1 FROM activity_group ag JOIN sub s ON ag.group_id = s.gid"
+        "  WHERE ag.activity_id = a.activity_id"
+        ")";
+    params.push_back(cfg_int(args, "group_id", 0));
+  }
+
+  nlohmann::json count_rows;
   std::string qerr;
-  if (db.query("SELECT activity_id, name, description, activity_type, start_time, end_time, "
-               "max_slots, need_review, allow_modify FROM activity WHERE " + where +
-               " ORDER BY start_time DESC LIMIT 50;",
-               params, rows, qerr) != SQLITE_OK) {
+  if (db.query("SELECT COUNT(*) AS c FROM activity a WHERE " + where + ";", params, count_rows,
+               qerr) != SQLITE_OK) {
+    return cfg_err(kDbError, "count failed: " + qerr);
+  }
+  const std::int64_t total = count_rows.empty() ? 0 : count_rows[0].value("c", 0);
+
+  nlohmann::json rows;
+  nlohmann::json list_params = params;
+  list_params.push_back(page_size);
+  list_params.push_back((page - 1) * page_size);
+  if (db.query(
+          "SELECT a.activity_id, a.name, a.description, a.activity_type, a.start_time, a.end_time, "
+          "a.max_slots, a.need_review, a.allow_modify, "
+          "(SELECT COUNT(*) FROM registration r WHERE r.activity_id = a.activity_id "
+          "  AND r.status IN (1, 2)) AS taken "
+          "FROM activity a WHERE " + where + " ORDER BY a.start_time DESC, a.activity_id DESC "
+          "LIMIT ? OFFSET ?;",
+          list_params, rows, qerr) != SQLITE_OK) {
     return cfg_err(kDbError, "query failed: " + qerr);
   }
-  return cfg_ok({{"items", std::move(rows)}});
+  return cfg_ok({{"items", std::move(rows)}, {"total", total}});
 }
 
 nlohmann::json activity_public_detail(Db& db, const nlohmann::json& args) {
@@ -378,7 +412,10 @@ nlohmann::json activity_public_detail(Db& db, const nlohmann::json& args) {
   if (!activity_row(db, activity_id, false, row)) return cfg_err(kNotFound, "活动不存在");
   if (row.value("status", 0) < 1) return cfg_err(kNotFound, "活动未发布");
   nlohmann::json data = publicActivity(row);
-  data["groups"] = buildDetail(db, row)["groups"];
+  // M5 B1：对齐 config.md 2.2 契约，公开详情补齐表单字段定义（供报名渲染 / 只读预览）
+  nlohmann::json detail = buildDetail(db, row);
+  data["groups"] = detail["groups"];
+  data["forms"] = detail["forms"];
   return cfg_ok(std::move(data));
 }
 

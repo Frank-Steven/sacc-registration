@@ -95,9 +95,11 @@ sacc-registration/
 ## 六、前端实现计划（frontend/）
 
 **M5（基础与报名端）**
+- 设计文档：[portal.md](frontend/portal.md)（工程搭建 / 路由布局 / 请求缓存层 / 报名端页面 / 后端前置补齐 B1~B6）
 - Vite + React 19 + antd 5 工程；路由表 + 三种布局（[architecture.md](frontend/architecture.md)）
 - 请求层：axios 拦截器 + TanStack Query；auth / 通知 store
 - 报名端页面：工作台、活动大厅（分组树 + 卡片）、详情、分步报名表单（FormBuilder）、我的报名 / 凭证、通知中心、资料（常用信息 / 偏好）
+- 后端前置补齐（契约先行）：`activity.public_detail` 补 forms、`activity.public_list` 加 group_id/taken、`group.public_tree`、`user.update`、`user_common_info.*`、`user_notify_pref.*`，见 [portal.md](frontend/portal.md) 八
 
 **M6（管理端）**
 - 活动管理：列表 / 编辑（FormDesigner 表单设计器）/ 复制 / 模板

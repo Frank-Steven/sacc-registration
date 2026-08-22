@@ -30,6 +30,7 @@ add_library(sacc_core STATIC
   src/core/dispatch.cpp
   src/crypto/kdf.cpp
   src/user/auth.cpp
+  src/user/profile.cpp
   src/config/authz.cpp
   src/config/activity.cpp
   src/config/group.cpp

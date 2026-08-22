@@ -11,6 +11,8 @@ nlohmann::json group_create(Db& db, const nlohmann::json& args);
 nlohmann::json group_update(Db& db, const nlohmann::json& args);
 nlohmann::json group_delete(Db& db, const nlohmann::json& args);
 nlohmann::json group_tree(Db& db, const nlohmann::json& args);
+// 报名端公开分组树（仅未软删，嵌套 children，供活动大厅筛选；M5 B3）
+nlohmann::json group_public_tree(Db& db, const nlohmann::json& args);
 nlohmann::json activity_group_bind(Db& db, const nlohmann::json& args);
 nlohmann::json activity_group_unbind(Db& db, const nlohmann::json& args);
 nlohmann::json activity_group_list(Db& db, const nlohmann::json& args);

@@ -436,8 +436,8 @@ nlohmann::json registration_mine(Db& db, const nlohmann::json& args) {
   if (db.query("SELECT r.registration_id, r.activity_id, a.name AS activity_name, "
                "a.activity_type, a.start_time, a.end_time, a.status AS activity_status, "
                "r.status, r.receipt_no, r.queue_no, r.review_remark, r.checkin_time, r.created_at "
-               "FROM registration r JOIN activity a ON r.activity_id = a.activity_id "
-               "WHERE r.uid = ? ORDER BY r.registration_id DESC LIMIT ? OFFSET ?;",
+               "FROM registration r JOIN activity a ON r.activity_id = a.activity_id " +
+               where + " ORDER BY r.registration_id DESC LIMIT ? OFFSET ?;",
                params, rows, qerr) != SQLITE_OK) {
     return cfg_err(kDbError, "query failed: " + qerr);
   }
