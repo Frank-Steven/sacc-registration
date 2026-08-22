@@ -3,16 +3,12 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 // fields_json 须为合法 JSON 数组（空数组 = 空表单快照）
 const nlohmann::json* validateFieldsJson(const std::string& s) {

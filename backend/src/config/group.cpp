@@ -3,17 +3,12 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 // 目标分组是否为 group_id 的后代（含自身）→ 用于禁止移动到自身子树
 bool is_descendant(Db& db, std::int64_t ancestor, std::int64_t target) {

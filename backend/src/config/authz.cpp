@@ -4,17 +4,10 @@
 #include <cstdlib>
 #include <sqlite3.h>
 
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
-
-nlohmann::json cfg_ok(nlohmann::json data) {
-  return nlohmann::json{{"code", 0}, {"data", std::move(data)}};
-}
-
-nlohmann::json cfg_err(int code, const std::string& msg) {
-  return nlohmann::json{{"code", code}, {"message", msg}};
-}
 
 std::string cfg_str(const nlohmann::json& args, const char* key) {
   const auto it = args.find(key);

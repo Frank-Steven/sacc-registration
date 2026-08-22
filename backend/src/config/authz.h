@@ -5,12 +5,13 @@
 #include <string>
 
 #include "core/db.h"
+#include "core/errors.h"
 
 namespace sacc {
 
-// ---------- 统一响应与参数提取（配置层共用） ----------
-nlohmann::json cfg_ok(nlohmann::json data);
-nlohmann::json cfg_err(int code, const std::string& msg);
+// ---------- 统一响应与参数提取（配置层共用；响应构造委托 core/errors.h，避免重复实现） ----------
+inline nlohmann::json cfg_ok(nlohmann::json data) { return ok(std::move(data)); }
+inline nlohmann::json cfg_err(int code, const std::string& msg) { return err(code, msg); }
 std::string cfg_str(const nlohmann::json& args, const char* key);
 std::int64_t cfg_int(const nlohmann::json& args, const char* key, std::int64_t def);
 bool cfg_bool(const nlohmann::json& args, const char* key, bool def);

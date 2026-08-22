@@ -4,17 +4,12 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 // field_key：小写字母开头，字母/数字/下划线，长度 2~32（config.md 3.3）
 bool validFieldKey(const std::string& k) {

@@ -6,15 +6,12 @@
 #include <vector>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 constexpr std::int64_t kMaxExportLimit = 5000;
 constexpr std::int64_t kMaxCsvRows = 10000;
 constexpr std::int64_t kMaxTrendDays = 90;
@@ -94,16 +91,7 @@ std::string display_value(int field_type, const std::string& value, const nlohma
   return value;
 }
 
-// 转义 LIKE 通配符（% _ \），配合 ESCAPE '\'
-std::string escape_like(const std::string& s) {
-  std::string out;
-  out.reserve(s.size());
-  for (const char c : s) {
-    if (c == '%' || c == '_' || c == '\\') out += '\\';
-    out += c;
-  }
-  return out;
-}
+// 转义 LIKE 通配符（% _ \）：复用 core/util.h 的 escape_like（注册列表 / 导出过滤共用，深化审查 D3）
 
 // 导出过滤条件（activity_id 恒在；status/keyword/created_from/created_to 可选）
 std::string export_conditions(const nlohmann::json& args, std::int64_t activity_id,

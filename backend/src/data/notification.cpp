@@ -4,14 +4,12 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kDbError = 2001;
 
 // 取通知渠道：用户偏好（user_notify_pref）优先；未配置按活动 notify_channel；默认站内信
 int channel_for(Db& db, std::int64_t uid, int type, std::int64_t activity_id) {

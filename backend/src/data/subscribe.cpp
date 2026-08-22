@@ -3,15 +3,13 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kDbError = 2001;
+
 } // namespace
 
 nlohmann::json subscribe_add(Db& db, const nlohmann::json& args) {

@@ -9,6 +9,7 @@
 #include "config/group.h"
 #include "config/role.h"
 #include "config/template.h"
+#include "core/errors.h"
 #include "core/util.h"
 #include "data/checkin.h"
 #include "data/export.h"
@@ -21,18 +22,8 @@
 namespace sacc {
 
 namespace {
-constexpr int kOk = 0;
 constexpr int kUnknownOp = 1001;
 constexpr int kInvalidRequest = 1002;
-constexpr int kDbError = 2001;
-
-nlohmann::json ok(nlohmann::json data) {
-  return nlohmann::json{{"code", kOk}, {"data", std::move(data)}};
-}
-
-nlohmann::json err(int code, const std::string& msg) {
-  return nlohmann::json{{"code", code}, {"message", msg}};
-}
 
 // 取 args 对象（缺省为空对象），非对象时按空处理
 const nlohmann::json& argsOf(const nlohmann::json& req) {

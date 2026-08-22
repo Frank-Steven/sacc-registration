@@ -4,17 +4,12 @@
 #include <vector>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 
 namespace sacc {
 
 namespace {
-
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 bool user_exists(Db& db, std::int64_t uid) {
   nlohmann::json rows;

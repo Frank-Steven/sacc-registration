@@ -5,6 +5,7 @@
 #include <string>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 #include "data/notification.h"
 #include "data/validation.h"
@@ -12,11 +13,6 @@
 namespace sacc {
 
 namespace {
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 // 统一读取活动状态：行可能来自 activity_row（SELECT *，键为 status）或
 // reg_with_activity（JOIN 用 a.status AS activity_status，避让 r.* 的报名状态 status 键）。
@@ -166,13 +162,19 @@ nlohmann::json registration_create(Db& db, const nlohmann::json& args) {
     const std::int64_t rid = rows[0]["registration_id"].get<std::int64_t>();
     if (rows[0].value("status", 0) == 4) {
       // 复用已取消记录：重置为草稿并清空明细（registration.md 决策）
-      db.execParams("UPDATE registration SET status = 0, current_step = 0, receipt_no = '', "
-                    "queue_no = NULL, reviewer = NULL, review_time = NULL, review_remark = '', "
-                    "checkin_time = NULL, updated_at = ? WHERE registration_id = ?;",
-                    nlohmann::json::array({now, rid}));
-      db.execParams("DELETE FROM registration_data WHERE registration_id = ?;",
-                    nlohmann::json::array({rid}));
-      db.commit();
+      if (db.execParams("UPDATE registration SET status = 0, current_step = 0, receipt_no = '', "
+                        "queue_no = NULL, reviewer = NULL, review_time = NULL, review_remark = '', "
+                        "checkin_time = NULL, updated_at = ? WHERE registration_id = ?;",
+                        nlohmann::json::array({now, rid})) != SQLITE_OK ||
+          db.execParams("DELETE FROM registration_data WHERE registration_id = ?;",
+                        nlohmann::json::array({rid})) != SQLITE_OK) {
+        db.rollback();
+        return cfg_err(kDbError, "reset failed: " + db.lastError());
+      }
+      if (db.commit() != SQLITE_OK) {
+        db.rollback();
+        return cfg_err(kDbError, "commit failed: " + db.lastError());
+      }
       return cfg_ok({{"registration_id", rid}, {"status", 0}});
     }
     db.rollback();
@@ -185,7 +187,10 @@ nlohmann::json registration_create(Db& db, const nlohmann::json& args) {
     return cfg_err(kDbError, "insert failed: " + db.lastError());
   }
   const std::int64_t rid = db.lastInsertRowid();
-  db.commit();
+  if (db.commit() != SQLITE_OK) {
+    db.rollback();
+    return cfg_err(kDbError, "commit failed: " + db.lastError());
+  }
   return cfg_ok({{"registration_id", rid}, {"status", 0}});
 }
 
@@ -242,11 +247,17 @@ nlohmann::json registration_save(Db& db, const nlohmann::json& args) {
     }
   }
   if (step > 0) {
-    db.execParams("UPDATE registration SET current_step = ?, updated_at = ? "
-                  "WHERE registration_id = ?;",
-                  nlohmann::json::array({step, now_ts(), registration_id}));
+    if (db.execParams("UPDATE registration SET current_step = ?, updated_at = ? "
+                      "WHERE registration_id = ?;",
+                      nlohmann::json::array({step, now_ts(), registration_id})) != SQLITE_OK) {
+      db.rollback();
+      return cfg_err(kDbError, "step update failed: " + db.lastError());
+    }
   }
-  db.commit();
+  if (db.commit() != SQLITE_OK) {
+    db.rollback();
+    return cfg_err(kDbError, "commit failed: " + db.lastError());
+  }
   return cfg_ok({{"ok", true}});
 }
 
@@ -453,16 +464,10 @@ nlohmann::json registration_admin_list(Db& db, const nlohmann::json& args) {
   }
   const std::string kw = cfg_str(args, "keyword");
   if (!kw.empty()) {
-    // 转义 LIKE 通配符（% _ \），防止关键词含通配符时扩大匹配（ESCAPE '\'）
-    std::string esc;
-    esc.reserve(kw.size());
-    for (const char c : kw) {
-      if (c == '%' || c == '_' || c == '\\') esc += '\\';
-      esc += c;
-    }
+    // 转义 LIKE 通配符（% _ \），防止关键词含通配符时扩大匹配（ESCAPE '\'，共享 escape_like）
+    const std::string like = "%" + escape_like(kw) + "%";
     where += " AND (r.receipt_no LIKE ? ESCAPE '\\' OR u.name LIKE ? ESCAPE '\\' "
              "OR u.student_id LIKE ? ESCAPE '\\' OR u.phone LIKE ? ESCAPE '\\')";
-    const std::string like = "%" + esc + "%";
     params.push_back(like);
     params.push_back(like);
     params.push_back(like);

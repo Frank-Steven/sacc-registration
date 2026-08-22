@@ -5,6 +5,7 @@
 #include <sqlite3.h>
 
 #include "config/authz.h"
+#include "core/errors.h"
 #include "core/util.h"
 #include "crypto/kdf.h"
 #include "data/registration.h"
@@ -12,11 +13,6 @@
 namespace sacc {
 
 namespace {
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
 
 // 审核 / 签到管理权限：活动管理员（role2）或审核员（role3），活动在授权范围（超管恒放行）
 bool can_checkin_activity(Db& db, std::int64_t uid, std::int64_t activity_id) {

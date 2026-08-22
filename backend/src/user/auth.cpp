@@ -6,6 +6,7 @@
 
 #include <sqlite3.h>
 
+#include "core/errors.h"
 #include "core/util.h"
 #include "crypto/kdf.h"
 
@@ -13,26 +14,10 @@ namespace sacc {
 
 namespace {
 
-constexpr int kOk = 0;
-constexpr int kUnauthorized = 401;
-constexpr int kForbidden = 403;
-constexpr int kNotFound = 404;
-constexpr int kConflict = 409;
-constexpr int kValidation = 422;
-constexpr int kDbError = 2001;
-
 constexpr int kMaxLoginFail = 5;                  // 连续失败阈值
 constexpr std::int64_t kLockSeconds = 900;        // 锁定 15 分钟
 constexpr std::int64_t kResetExpireSeconds = 3600; // 重置令牌 1 小时
 constexpr std::size_t kSaltLen = 16;              // 盐字节数
-
-nlohmann::json ok(nlohmann::json data) {
-  return nlohmann::json{{"code", kOk}, {"data", std::move(data)}};
-}
-
-nlohmann::json err(int code, const std::string& msg) {
-  return nlohmann::json{{"code", code}, {"message", msg}};
-}
 
 std::string str(const nlohmann::json& args, const char* key) {
   const auto it = args.find(key);

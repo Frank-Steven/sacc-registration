@@ -42,4 +42,15 @@ std::string to_hex(const unsigned char* data, std::size_t n) {
   return out;
 }
 
+// 转义 LIKE 通配符（% _ \），配合 ESCAPE '\'：防止关键词含通配符时扩大匹配
+std::string escape_like(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (const char c : s) {
+    if (c == '%' || c == '_' || c == '\\') out += '\\';
+    out += c;
+  }
+  return out;
+}
+
 } // namespace sacc
