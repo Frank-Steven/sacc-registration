@@ -32,9 +32,12 @@ export default function Profile() {
 
   const handleSave = async (values) => {
     try {
-      const profile = await userApi.updateProfile(values);
-      setUser(profile);
-      queryClient.invalidateQueries({ queryKey: ['me'] });
+      await userApi.updateProfile(values);
+      // user.update 仅返回 { ok: true }，需重新拉取完整资料（含 username/uid）写入会话，
+      // 否则顶栏会因 user 被覆盖为 { ok: true } 而显示"未登录"
+      const fresh = await authApi.me();
+      setUser(fresh);
+      queryClient.setQueryData(['me'], fresh);
       message.success(t('profile.saved'));
     } catch (err) {
       message.error(err.message);
