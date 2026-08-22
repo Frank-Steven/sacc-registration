@@ -1,0 +1,13 @@
+{
+  "name": "sacc-registration",
+  "version": "0.1.0",
+  "description": "sacc registration design",
+  "main": "index.js",
+  "repository": "https://github.com/Frank-Steven/sacc-registration.git",
+  "author": "Frank-Steven <FrankStevenTool@outlook.com>",
+  "license": "MIT",
+  "private": false,
+  "dependencies": {
+    "react": "^19.2.8"
+  }
+}
