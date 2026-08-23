@@ -16,7 +16,12 @@ export default function Profile() {
   const setUser = useAuthStore((s) => s.setUser);
   const [form] = Form.useForm();
 
-  const { data: me, isLoading } = useQuery({ queryKey: ['me'], queryFn: authApi.me });
+  const { data: me, isLoading } = useQuery({
+    queryKey: ['me'],
+    queryFn: authApi.me,
+    // 编辑表单由服务端数据填充，关闭全局轮询防止刷新覆盖正在编辑的输入
+    refetchInterval: false,
+  });
 
   useEffect(() => {
     if (me) {

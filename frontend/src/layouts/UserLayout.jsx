@@ -35,7 +35,7 @@ function useUnreadPolling() {
       }
     };
     tick();
-    timer = setInterval(tick, 30_000);
+    timer = setInterval(tick, 15_000);
     return () => clearInterval(timer);
   }, [token, setUnread]);
 }

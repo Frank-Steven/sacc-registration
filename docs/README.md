@@ -24,6 +24,7 @@ docs/
 └── frontend/                 前端设计
     ├── index.md              前端文档导航
     ├── portal.md             M5 前端基础与报名端设计
+    ├── admin.md              M6 管理端设计（活动管理 / 报名运营）
     ├── architecture.md       架构 / 技术栈 / 权限 / 路由
     ├── page-design.md        页面设计
     ├── interaction-design.md 功能交互设计

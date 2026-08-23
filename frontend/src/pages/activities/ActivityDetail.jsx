@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Descriptions,
+  Popconfirm,
   Progress,
   Space,
   Spin,
@@ -15,7 +16,7 @@ import {
 import { App } from 'antd';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { activityApi, subscribeApi } from '../../api/index.js';
+import { activityApi, registrationApi, subscribeApi } from '../../api/index.js';
 import { useAuthStore } from '../../stores/auth.js';
 import { ActivityType } from '../../constants/index.js';
 import { formatTime, windowText, quotaPercent } from '../../utils/format.js';
@@ -45,6 +46,24 @@ export default function ActivityDetail() {
     enabled: !!token,
   });
   const subscribed = (subs?.items || []).some((s) => String(s.activity_id) === String(id));
+
+  // 当前用户对该活动的报名状态（登录后查询），驱动报名按钮文案
+  const { data: myRegs } = useQuery({
+    queryKey: ['my-registrations'],
+    queryFn: () => registrationApi.mine({ page_size: 100 }),
+    enabled: !!token,
+  });
+  const myReg = (myRegs?.items || []).find((r) => String(r.activity_id) === String(id));
+  const regStatus = myReg?.status;
+
+  const cancelMutation = useMutation({
+    mutationFn: () => registrationApi.cancel(myReg.registration_id),
+    onSuccess: () => {
+      message.success(t('reg.cancelled'));
+      qc.invalidateQueries({ queryKey: ['my-registrations'] });
+    },
+    onError: (e) => message.error(e.message),
+  });
 
   const subMutation = useMutation({
     mutationFn: () => (subscribed ? subscribeApi.remove(id) : subscribeApi.add(id)),
@@ -153,11 +172,51 @@ export default function ActivityDetail() {
       {activity.description && <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{activity.description}</Paragraph>}
 
       <Space align="center" wrap>
-        <Tooltip title={stateText}>
-          <Button type="primary" size="large" disabled={state !== 'open'} onClick={handleRegister}>
-            {t('activity.register_now')}
-          </Button>
-        </Tooltip>
+        {(() => {
+          const registerBtn = (label) => (
+            <Tooltip title={stateText}>
+              <Button type="primary" size="large" disabled={state !== 'open'} onClick={handleRegister}>
+                {label}
+              </Button>
+            </Tooltip>
+          );
+          // 未登录 / 未报名 / 已取消 → 立即报名；草稿 → 继续填写；
+          // 待审核 → 审核中（可取消）；已通过 → 查看详情；候补 → 候补中（可取消）
+          if (!token || regStatus === undefined || regStatus === 4) return registerBtn(t('activity.register_now'));
+          if (regStatus === 0) return registerBtn(t('common.continue_fill'));
+          if (regStatus === 1) {
+            return (
+              <Tooltip title={t('activity.reviewing')}>
+                <Button type="primary" size="large" disabled>{t('activity.reviewing')}</Button>
+              </Tooltip>
+            );
+          }
+          if (regStatus === 2) {
+            return (
+              <Link to={`/my-registrations/${myReg.registration_id}`}>
+                <Button type="primary" size="large">{t('activity.view_detail')}</Button>
+              </Link>
+            );
+          }
+          return (
+            <Tooltip title={t('activity.waitlisted')}>
+              <Button type="primary" size="large" disabled>{t('activity.waitlisted')}</Button>
+            </Tooltip>
+          );
+        })()}
+        {token && myReg && (regStatus === 1 || regStatus === 5) && (
+          <Popconfirm
+            title={t('reg.cancel_title')}
+            okText={t('reg.cancel_ok')}
+            cancelText={t('reg.cancel_later')}
+            okButtonProps={{ danger: true }}
+            onConfirm={() => cancelMutation.mutate()}
+          >
+            <Button danger size="large" loading={cancelMutation.isPending}>
+              {t('reg.cancel')}
+            </Button>
+          </Popconfirm>
+        )}
         {token && (
           <Space>
             <Switch

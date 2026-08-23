@@ -144,6 +144,8 @@ export function createRoutes({ runtime, config }) {
     { method: 'PUT', pattern: '/api/admin/templates/:id', handler: admin('form_template.update', { template_id: 'id' }) },
     { method: 'DELETE', pattern: '/api/admin/templates/:id', handler: admin('form_template.delete', { template_id: 'id' }) },
     { method: 'POST', pattern: '/api/admin/templates/:id/apply', handler: admin('form_template.apply', { template_id: 'id' }) },
+    // M6：将活动当前表单快照保存为模板（wasm op 已存在，M2 无独立 HTTP 路由，M6 补充）
+    { method: 'POST', pattern: '/api/admin/activities/:id/templates', handler: admin('form_template.save_from_activity', { activity_id: 'id' }) },
     // 角色 / 授权 / 审计（user_role.list 按目标用户查询，route 语义见 config.md 2.2）
     { method: 'GET', pattern: '/api/admin/roles', handler: admin('role.list') },
     { method: 'GET', pattern: '/api/admin/users/:uid/roles', handler: admin('user_role.list', { target_uid: 'uid' }) },

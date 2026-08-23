@@ -4,10 +4,10 @@ import { Spin } from 'antd';
 import AuthLayout from './layouts/AuthLayout.jsx';
 import UserLayout from './layouts/UserLayout.jsx';
 import AdminLayout from './layouts/AdminLayout.jsx';
-import { RequireAuth, GuestOnly, Forbidden, NotFound } from './guards/index.jsx';
+import { RequireAuth, RequireAdmin, GuestOnly, Forbidden, NotFound } from './guards/index.jsx';
 import { useAuthStore } from './stores/auth.js';
 
-// 页面级分包（React.lazy + Suspense）：auth / activities / 其余报名端页面 / admin 占位
+// 页面级分包（React.lazy + Suspense）：auth / activities / 其余报名端页面 / admin（M6 管理端）
 const Login = lazy(() => import('./pages/auth/Login.jsx'));
 const Register = lazy(() => import('./pages/auth/Register.jsx'));
 const ForgotPassword = lazy(() => import('./pages/auth/ForgotPassword.jsx'));
@@ -19,7 +19,15 @@ const MyRegistrations = lazy(() => import('./pages/my-registrations/index.jsx'))
 const RegistrationDetail = lazy(() => import('./pages/my-registrations/Detail.jsx'));
 const Notifications = lazy(() => import('./pages/notifications/index.jsx'));
 const Profile = lazy(() => import('./pages/profile/index.jsx'));
-const AdminPlaceholder = lazy(() => import('./pages/admin/index.jsx'));
+// 管理端页面
+const Dashboard = lazy(() => import('./pages/admin/Dashboard.jsx'));
+const AdminActivities = lazy(() => import('./pages/admin/Activities.jsx'));
+const ActivityEdit = lazy(() => import('./pages/admin/ActivityEdit.jsx'));
+const Templates = lazy(() => import('./pages/admin/Templates.jsx'));
+const Registrations = lazy(() => import('./pages/admin/Registrations.jsx'));
+const Review = lazy(() => import('./pages/admin/Review.jsx'));
+const Checkin = lazy(() => import('./pages/admin/Checkin.jsx'));
+const Stats = lazy(() => import('./pages/admin/Stats.jsx'));
 
 const fallback = (
   <div style={{ textAlign: 'center', padding: 64 }}>
@@ -58,10 +66,18 @@ export const router = createBrowserRouter([
   },
   {
     path: '/admin',
-    element: <RequireAuth><AdminLayout /></RequireAuth>,
+    element: <RequireAdmin><AdminLayout /></RequireAdmin>,
     children: [
-      { index: true, element: suspend(<AdminPlaceholder />) },
-      { path: '*', element: suspend(<AdminPlaceholder />) },
+      { index: true, element: suspend(<Dashboard />) },
+      { path: 'activities', element: suspend(<AdminActivities />) },
+      { path: 'activities/new', element: suspend(<ActivityEdit />) },
+      { path: 'activities/:id', element: suspend(<ActivityEdit />) },
+      { path: 'activities/:id/registrations', element: suspend(<Registrations />) },
+      { path: 'activities/:id/review', element: suspend(<Review />) },
+      { path: 'activities/:id/checkin', element: suspend(<Checkin />) },
+      { path: 'activities/:id/stats', element: suspend(<Stats />) },
+      { path: 'templates', element: suspend(<Templates />) },
+      { path: '*', element: <NotFound /> },
     ],
   },
   { path: '/403', element: <Forbidden /> },

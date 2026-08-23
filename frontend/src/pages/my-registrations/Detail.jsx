@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Button, Card, Descriptions, Divider, Space, Spin, Typography, App as AntApp } from 'antd';
+import { Button, Card, Descriptions, Divider, Input, Modal, Space, Spin, Typography, App as AntApp } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { registrationApi } from '../../api/index.js';
 import RegistrationStatusTag from '../../components/RegistrationStatusTag.jsx';
@@ -10,7 +10,7 @@ import { t, useI18n } from '../../utils/i18n/index.js';
 
 const { Text } = Typography;
 
-// 展示报名详情与凭证；操作：已通过 → 查看凭证 / 签到；填写中 → 继续填写；
+// 展示报名详情与凭证；操作：已通过 → 查看凭证 / 签到（自助或动态码输码）；填写中 → 继续填写；
 // 0/1/2/5 → 取消报名（409 冲突时提示后端 message）
 export default function RegistrationDetail() {
   useI18n();
@@ -18,6 +18,9 @@ export default function RegistrationDetail() {
   const { message, modal } = AntApp.useApp();
   const queryClient = useQueryClient();
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
+  const [code, setCode] = useState('');
+  const [codeSubmitting, setCodeSubmitting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['registration', rid],
@@ -61,6 +64,26 @@ export default function RegistrationDetail() {
     });
   };
 
+  // 动态码签到（checkin_mode=2）：提交 6 位码
+  const submitCode = async () => {
+    if (!/^\d{6}$/.test(code.trim())) {
+      message.error(t('reg.checkin_code_required'));
+      return;
+    }
+    setCodeSubmitting(true);
+    try {
+      await registrationApi.checkinByCode(registration.activity_id, code.trim());
+      message.success(t('reg.checkin_success'));
+      setCodeOpen(false);
+      setCode('');
+      queryClient.invalidateQueries({ queryKey: ['registration', rid] });
+    } catch (err) {
+      message.error(err.message);
+    } finally {
+      setCodeSubmitting(false);
+    }
+  };
+
   if (isLoading || !registration) {
     return (
       <Card>
@@ -76,11 +99,19 @@ export default function RegistrationDetail() {
     actions.push(
       <Button key="receipt" type="primary" onClick={() => setReceiptOpen(true)}>
         {t('common.view_receipt')}
-      </Button>,
-      <Button key="checkin" loading={checkinMutation.isPending} onClick={() => checkinMutation.mutate()}>
-        {t('reg.checkin')}
       </Button>
     );
+    // 未签到：提供签到入口（自助 checkin.mine；动态码模式走输码）
+    if (!registration.checkin_time) {
+      actions.push(
+        <Button key="checkin" loading={checkinMutation.isPending} onClick={() => checkinMutation.mutate()}>
+          {t('reg.checkin')}
+        </Button>,
+        <Button key="code" onClick={() => setCodeOpen(true)}>
+          {t('reg.checkin_code')}
+        </Button>
+      );
+    }
   }
   if (registration.status === 0) {
     actions.push(
@@ -127,6 +158,27 @@ export default function RegistrationDetail() {
       )}
 
       <ReceiptModal open={receiptOpen} onClose={() => setReceiptOpen(false)} registration={registration} />
+
+      <Modal
+        title={t('reg.checkin_code_title')}
+        open={codeOpen}
+        onOk={submitCode}
+        okButtonProps={{ loading: codeSubmitting }}
+        onCancel={() => setCodeOpen(false)}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+          <Text type="secondary">{t('reg.checkin_code_ph')}</Text>
+          <Input
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="000000"
+            maxLength={6}
+            size="large"
+            style={{ textAlign: 'center', fontSize: 24, letterSpacing: 8, fontFamily: 'monospace' }}
+          />
+        </Space>
+      </Modal>
     </Card>
   );
 }

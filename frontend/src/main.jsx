@@ -25,6 +25,8 @@ export const queryClient = new QueryClient({
       },
       staleTime: 60_000,
       refetchOnWindowFocus: false,
+      // 全站实时刷新：页面可见时每 15s 自动拉取最新状态（通知/名额/审核/签到/看板等联动）
+      refetchInterval: 15_000,
     },
   },
 });

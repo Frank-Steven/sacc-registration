@@ -160,6 +160,11 @@ nlohmann::json registration_create(Db& db, const nlohmann::json& args) {
   }
   if (!rows.empty()) {
     const std::int64_t rid = rows[0]["registration_id"].get<std::int64_t>();
+    if (rows[0].value("status", 0) == 0) {
+      // 已有草稿（「继续填写」再次进入表单）：幂等返回现有记录，保留已填内容
+      db.rollback();
+      return cfg_ok({{"registration_id", rid}, {"status", 0}});
+    }
     if (rows[0].value("status", 0) == 4) {
       // 复用已取消记录：重置为草稿并清空明细（registration.md 决策）
       if (db.execParams("UPDATE registration SET status = 0, current_step = 0, receipt_no = '', "

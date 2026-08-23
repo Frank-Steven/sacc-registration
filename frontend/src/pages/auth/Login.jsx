@@ -38,7 +38,6 @@ export default function Login() {
       <Form
         layout="vertical"
         size="large"
-        initialValues={{ username: 'demo', password: 'demo1234' }}
         onFinish={onFinish}
       >
         <Form.Item

@@ -102,8 +102,10 @@ sacc-registration/
 - 后端前置补齐（契约先行）：`activity.public_detail` 补 forms、`activity.public_list` 加 group_id/taken、`group.public_tree`、`user.update`、`user_common_info.*`、`user_notify_pref.*`，见 [portal.md](frontend/portal.md) 八
 
 **M6（管理端）**
-- 活动管理：列表 / 编辑（FormDesigner 表单设计器）/ 复制 / 模板
-- 报名运营：名单（RegistrationTable 动态列 + 批量）、审核队列（ReviewDrawer）、签到（CheckinScanner）、数据看板（DataBoard）
+- 设计文档：[admin.md](frontend/admin.md)（路由权限 / 活动管理 / FormDesigner 表单设计器 / 名单与导出 / 审核 / 签到 / 看板 / 决策记录）
+- 活动管理：列表 / 编辑（基本信息 + 分组绑定 + ConfigEditor 配置 + 状态流转）/ 复制（模板组合）/ 模板
+- 报名运营：名单（RegistrationTable 固定列 + 详情 Drawer + CSV/分块导出）、审核队列（ReviewDrawer）、签到（CheckinScanner / 动态码大屏）、数据看板（DataBoard：单活动 stats/trend + 概览 activity.stats）
+- 权限：RequireAdmin（`user_role.list` 查自己角色）+ 角色门控按钮 + 后端 403 兜底；消费 M2/M3/M4 现有 API，无新增后端 ops
 
 **M7（系统管理端与打磨）**
 - 分组树管理、账号管理、角色授权（权限预览）、配置中心（ConfigEditor）、审计检索、数据治理

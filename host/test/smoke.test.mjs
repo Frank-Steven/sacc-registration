@@ -595,8 +595,10 @@ test('http M3: 报名 / 候补递补 / 审核 / 通知 / 订阅 / 签到 / 提�
     assert.equal(r1.code, 0);
     const rid1 = r1.data.registration_id;
     assert.equal(r1.data.status, 0);
-    // 重复创建 → 409
-    assert.equal((await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json()).code, 409);
+    // 已有草稿（继续填写）再创建 → 幂等返回同一 rid
+    const r1b = await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json();
+    assert.equal(r1b.code, 0);
+    assert.equal(r1b.data.registration_id, rid1);
     const fieldsOk = (name, email) => ({
       fields: [
         { field_id: fName.data.field_id, value: name },

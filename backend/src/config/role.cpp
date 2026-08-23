@@ -92,9 +92,12 @@ nlohmann::json user_role_revoke(Db& db, const nlohmann::json& args) {
 
 nlohmann::json user_role_list(Db& db, const nlohmann::json& args) {
   const std::int64_t operator_uid = cfg_int(args, "uid", 0);
-  if (!is_super_admin(db, operator_uid)) return cfg_err(kForbidden, "仅超级管理员可查看授权");
   const std::int64_t target_uid = cfg_int(args, "target_uid", 0);
   if (target_uid <= 0) return cfg_err(kValidation, "target_uid 无效");
+  // 用户可查自身角色（M6 管理端 RequireAdmin / 菜单门控依赖此接口）；跨用户查询需超管
+  if (target_uid != operator_uid && !is_super_admin(db, operator_uid)) {
+    return cfg_err(kForbidden, "仅超级管理员可查看其他用户授权");
+  }
 
   std::string sql =
       "SELECT ur.role_id, r.name AS role_name, ur.group_id, g.name AS group_name "

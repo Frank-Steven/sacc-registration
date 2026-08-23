@@ -606,10 +606,10 @@ int main() {
                   R"(,"activity_id":)" + std::to_string(act) + R"(}})");
     CHECK(rr["code"] == 0);
     const std::int64_t r1 = rr["data"]["registration_id"].get<std::int64_t>();
-    // 重复报名 → 409
+    // 已有草稿（继续填写）再 create → 幂等返回同一 rid
     rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u1) +
                   R"(,"activity_id":)" + std::to_string(act) + R"(}})");
-    CHECK(rr["code"] == 409);
+    CHECK(rr["code"] == 0 && rr["data"]["registration_id"] == r1);
 
     // 草稿保存：字段正确
     rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u1) +
@@ -632,6 +632,10 @@ int main() {
     CHECK(rr["code"] == 0 && rr["data"]["status"] == 1);
     const std::string receipt1 = rr["data"]["receipt_no"].get<std::string>();
     CHECK(receipt1 == "R" + std::to_string(act) + "-" + std::to_string(r1));
+    // 已提交（status=1）后再 create → 409 防重复报名
+    rr = invoke(rdb, R"({"op":"registration.create","args":{"uid":)" + std::to_string(u1) +
+                  R"(,"activity_id":)" + std::to_string(act) + R"(}})");
+    CHECK(rr["code"] == 409);
     // 已提交不可再提交
     rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u1) +
                   R"(,"registration_id":)" + std::to_string(r1) + R"(}})");

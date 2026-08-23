@@ -32,6 +32,8 @@ export const registrationApi = {
   submit: (rid) => post(`/me/registrations/${rid}/submit`, {}),
   cancel: (rid) => post(`/me/registrations/${rid}/cancel`, {}),
   checkin: (rid) => post(`/me/registrations/${rid}/checkin`, {}),
+  // M6：线上动态码签到（checkin_mode=2，POST /api/me/checkin/code）
+  checkinByCode: (activityId, code) => post('/me/checkin/code', { activity_id: activityId, code }),
 };
 
 export const notificationApi = {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { List, Pagination, Tag, Typography, Flex, App as AntApp } from 'antd';
+import { Badge, List, Modal, Pagination, Tag, Typography, Flex, App as AntApp } from 'antd';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notificationApi } from '../api/index.js';
 import { useNotificationStore } from '../stores/notification.js';
@@ -7,14 +7,16 @@ import { NotifyType } from '../constants/index.js';
 import { formatTime } from '../utils/format.js';
 import { t, useI18n } from '../utils/i18n/index.js';
 
-const { Text } = Typography;
+const { Text, Title } = Typography;
 
 // 通知列表（可复用）：type 不传 = 全部，'unread' = 仅未读。
-// 单条点击未读 → 标记已读并驱动顶栏角标递减；分页由本组件内部管理。
+// 未读消息带红点标记；点击任意消息弹出详情（未读同时标记已读并驱动顶栏角标递减）；
+// 分页由本组件内部管理。
 export default function NotificationCenter({ type }) {
   useI18n();
   const unreadOnly = type === 'unread' ? 1 : 0;
   const [page, setPage] = useState(1);
+  const [detail, setDetail] = useState(null);
   const { message } = AntApp.useApp();
   const queryClient = useQueryClient();
   const decrement = useNotificationStore((s) => s.decrement);
@@ -47,12 +49,18 @@ export default function NotificationCenter({ type }) {
             <List.Item
               style={{ cursor: 'pointer' }}
               onClick={() => {
+                setDetail(item);
                 if (!item.is_read) readMutation.mutate(item.notification_id);
               }}
             >
               <List.Item.Meta
                 avatar={<Tag color={color}>{typeText}</Tag>}
-                title={<Text strong={!item.is_read}>{item.title}</Text>}
+                title={
+                  <Flex gap={8} align="center">
+                    {!item.is_read && <Badge color="red" />}
+                    <Text strong={!item.is_read}>{item.title}</Text>
+                  </Flex>
+                }
                 description={
                   <Flex vertical gap={4}>
                     <span>{item.content}</span>
@@ -76,6 +84,28 @@ export default function NotificationCenter({ type }) {
           showSizeChanger={false}
         />
       </Flex>
+
+      <Modal
+        title={t('notify.detail_title')}
+        open={!!detail}
+        onCancel={() => setDetail(null)}
+        footer={null}
+        destroyOnClose
+      >
+        {detail && (
+          <Flex vertical gap={12}>
+            <Title level={5} style={{ margin: 0 }}>{detail.title}</Title>
+            <Typography.Paragraph style={{ margin: 0 }}>{detail.content}</Typography.Paragraph>
+            <Flex wrap gap={8}>
+              <Tag color={NotifyType[detail.type]?.color ?? 'default'}>
+                {NotifyType[detail.type] ? t(`notifyType.${detail.type}`) : t('notify.unknown', { n: detail.type })}
+              </Tag>
+              <Tag>{t(`notifyChannel.${detail.channel}`)}</Tag>
+              <Text type="secondary">{formatTime(detail.created_at)}</Text>
+            </Flex>
+          </Flex>
+        )}
+      </Modal>
     </>
   );
 }

@@ -412,6 +412,16 @@ nlohmann::json activity_public_detail(Db& db, const nlohmann::json& args) {
   if (!activity_row(db, activity_id, false, row)) return cfg_err(kNotFound, "活动不存在");
   if (row.value("status", 0) < 1) return cfg_err(kNotFound, "活动未发布");
   nlohmann::json data = publicActivity(row);
+  // 已占名额（与 public_list 口径一致：status IN (1,2)）
+  nlohmann::json taken_rows;
+  std::string qerr;
+  if (db.query("SELECT COUNT(*) AS c FROM registration WHERE activity_id = ? AND status IN (1,2);",
+               nlohmann::json::array({activity_id}), taken_rows, qerr) == SQLITE_OK &&
+      !taken_rows.empty()) {
+    data["taken"] = taken_rows[0].value("c", 0);
+  } else {
+    data["taken"] = 0;
+  }
   // M5 B1：对齐 config.md 2.2 契约，公开详情补齐表单字段定义（供报名渲染 / 只读预览）
   nlohmann::json detail = buildDetail(db, row);
   data["groups"] = detail["groups"];
