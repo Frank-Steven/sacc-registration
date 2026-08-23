@@ -91,8 +91,9 @@ export async function runReminders({ runtime, lookaheadSec = 3600, nowSec } = {}
     });
     const actEmail = cfg.code === 0 && (cfg.data?.rows?.[0]?.config_value) === '1';
 
-    // 邮件降级：预计走邮件的 uid 中无邮箱的改走站内信（批量取有邮箱的集合）
-    const mailUids = uids.filter((u) => (pref.get(u) ?? (actEmail ? 1 : 0)) === 1);
+    // M8：渠道 bitmask（1=站内信 / 2=邮箱 / 3=两者）；含邮箱位的 uid 中无邮箱的降级站内信
+    const defaultChannels = actEmail ? 3 : 1;
+    const mailUids = uids.filter((u) => ((pref.get(u) ?? defaultChannels) & 2) !== 0);
     const hasMail = new Set();
     if (mailUids.length > 0) {
       const mailRes = await runtime.invoke({
@@ -111,9 +112,13 @@ export async function runReminders({ runtime, lookaheadSec = 3600, nowSec } = {}
     const content = `[#${activityId}]「${act.name}」将于 ${fmtDateTime(act.start_time)} 开始，请做好准备。`;
     const rows = [];
     for (const uid of uids) {
-      let channel = pref.has(uid) ? pref.get(uid) : (actEmail ? 1 : 0);
-      if (channel === 1 && !hasMail.has(uid)) channel = 0;
-      rows.push([uid, 2, title, content, 0, channel, channel === 0 ? 1 : 0, activityId, now]);
+      let channels = pref.has(uid) ? pref.get(uid) : defaultChannels;
+      if (channels < 1 || channels > 3) channels = 1;  // 防御：非法值回落站内信
+      if ((channels & 2) !== 0 && !hasMail.has(uid)) channels &= ~2;  // 无邮箱降级
+      if (channels === 0) channels = 1;
+      // 站内信直写即达（channel=0, send_status=1）；邮件入 SMTP 队列（channel=1, send_status=0）
+      if ((channels & 1) !== 0) rows.push([uid, 2, title, content, 0, 0, 1, activityId, now]);
+      if ((channels & 2) !== 0) rows.push([uid, 2, title, content, 0, 1, 0, activityId, now]);
     }
     // 批量写入（分批控制参数个数）
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
@@ -154,7 +159,8 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
   const q = await runtime.invoke({
     op: 'db.query',
     args: {
-      sql: 'SELECT n.notification_id, n.title, n.content, n.attempt_count, u.email FROM notification n ' +
+      sql: 'SELECT n.notification_id, n.title, n.content, n.attempt_count, n.activity_id, ' +
+        'u.uid AS user_uid, u.email FROM notification n ' +
         "JOIN \"user\" u ON u.uid = n.uid WHERE n.channel = 1 AND n.send_status = 0 " +
         'ORDER BY n.notification_id LIMIT ?;',
       params: [limit],
@@ -167,8 +173,9 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
   for (const row of rows) {
     const attempt = Number(row.attempt_count) || 0;
     if (!row.email) {
-      // 无邮箱属永久失败（用户不会补邮箱就重试）：置 2 终止，不再进队列
+      // 无邮箱属永久失败（用户不会补邮箱就重试）：置 2 终止，不再进队列；站内提示一次
       await markMailStatus(runtime, row.notification_id, 2, attempt);
+      await reportMailFailure(runtime, row, attempt === 0 ? '收件人未填写邮箱' : '');
       failed += 1;
       continue;
     }
@@ -180,6 +187,8 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
       // 发送异常（SMTP 抖动等）：置 0 回队列，下次扫描自动重试；达上限置 2 终止
       const next = attempt + 1;
       await markMailStatus(runtime, row.notification_id, next >= MAX_MAIL_ATTEMPTS ? 2 : 0, next);
+      // 首次失败（attempt 0→1）在站内提示，避免重试期间重复刷屏
+      if (attempt === 0) await reportMailFailure(runtime, row, err.message);
       failed += 1;
       logger.warn('mail send failed, will retry', {
         id: row.notification_id, attempt: next,
@@ -188,6 +197,23 @@ export async function flushMailQueue({ runtime, sendMail, limit = 50 } = {}) {
     }
   }
   return { sent, failed, pending: rows.length - sent - failed };
+}
+
+// 邮件发送失败 → 站内提示（type 4，channel=0 直写即达）；内容附原邮件标题与失败原因
+async function reportMailFailure(runtime, row, reason) {
+  const title = '邮件发送失败';
+  const content = `【${row.title}】\n${row.content}\n\n发送失败原因：${reason || '未知'}`;
+  const res = await runtime.invoke({
+    op: 'db.exec_params',
+    args: {
+      sql: 'INSERT INTO notification (uid, type, title, content, is_read, channel, send_status, ' +
+        'activity_id, created_at) VALUES (?, 4, ?, ?, 0, 0, 1, ?, ?);',
+      params: [row.user_uid, title, content,
+        row.activity_id != null ? row.activity_id : null,
+        Math.floor(Date.now() / 1000)],
+    },
+  });
+  if (res.code !== 0) logger.error('mail failure notice insert failed', { notificationId: row.notification_id, err: res.message });
 }
 
 // 更新邮件通知的发送状态与尝试次数（0005 迁移新增 attempt_count 列）

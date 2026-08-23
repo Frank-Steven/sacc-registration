@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { App, Button, Card, Col, Empty, Form, Input, InputNumber, Modal, Popconfirm, Row, Space, Spin, Table, Tag, Tooltip, Tree, TreeSelect, Typography } from 'antd';
+import { App, Button, Card, Col, Drawer, Empty, Form, Grid, Input, InputNumber, Modal, Popconfirm, Row, Space, Spin, Table, Tag, Tooltip, Tree, TreeSelect, Typography } from 'antd';
 import {
-  PlusOutlined, EditOutlined, SwapOutlined, DeleteOutlined, ArrowLeftOutlined,
+  PlusOutlined, EditOutlined, SwapOutlined, DeleteOutlined, ArrowLeftOutlined, ApartmentOutlined,
 } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminGroupApi, adminActivityApi } from '../../api/admin.js';
@@ -54,7 +54,10 @@ export default function GroupManager() {
   useDocumentTitle();
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const screens = Grid.useBreakpoint();
+  const isMobile = screens.md === false;
   const [selectedKey, setSelectedKey] = useState(null);
+  const [treeOpen, setTreeOpen] = useState(false); // 移动端：树收纳抽屉
   const [modal, setModal] = useState(null); // { mode: 'create'|'rename'|'move', group }
   const [form] = Form.useForm();
 
@@ -217,7 +220,8 @@ export default function GroupManager() {
       </div>
 
       <Row gutter={16}>
-        <Col xs={24} md={9} xl={8}>
+        {/* 树：桌面常驻左栏；移动端收纳为抽屉（列表区顶部「分组树」按钮打开） */}
+        <Col xs={24} md={9} xl={8} style={{ display: isMobile ? 'none' : undefined }}>
           <Card title={t('admin.sys.groups.title_col')} styles={{ body: { padding: 8 } }}>
             {isLoading ? (
               <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
@@ -242,7 +246,17 @@ export default function GroupManager() {
         <Col xs={24} md={15} xl={16}>
           <Card
             title={
-              <Space size={8}>
+              <Space size={8} wrap>
+                {isMobile && (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<ApartmentOutlined />}
+                    onClick={() => setTreeOpen(true)}
+                  >
+                    {t('admin.sys.groups.title_col')}
+                  </Button>
+                )}
                 <ArrowLeftOutlined style={{ color: '#999' }} />
                 <span>{t('admin.sys.groups.activities_col')}</span>
                 {selectedGroup && <Text type="secondary">{selectedGroup.name}</Text>}
@@ -263,6 +277,7 @@ export default function GroupManager() {
                   columns={actColumns}
                   dataSource={activities}
                   pagination={false}
+                  scroll={{ x: 640 }}
                   locale={{ emptyText: t('admin.sys.groups.activities_empty') }}
                 />
               </>
@@ -270,6 +285,37 @@ export default function GroupManager() {
           </Card>
         </Col>
       </Row>
+
+      {/* 移动端：分组树抽屉（节点操作完整，选择后关闭） */}
+      <Drawer
+        open={isMobile && treeOpen}
+        onClose={() => setTreeOpen(false)}
+        placement="left"
+        width={Math.min(window.innerWidth * 0.85, 300)}
+        title={t('admin.sys.groups.title_col')}
+      >
+        {isLoading ? (
+          <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+        ) : treeData.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('admin.sys.groups.empty')}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setTreeOpen(false); openCreate(null); }}>
+              {t('admin.sys.groups.new_root')}
+            </Button>
+          </Empty>
+        ) : (
+          <Tree
+            treeData={treeData}
+            blockNode
+            defaultExpandAll
+            titleRender={renderTitle}
+            selectedKeys={selectedKey ? [selectedKey] : []}
+            onSelect={(keys) => {
+              setSelectedKey(keys.length ? String(keys[0]) : null);
+              if (keys.length) setTreeOpen(false);
+            }}
+          />
+        )}
+      </Drawer>
 
       <Modal
         open={!!modal}
@@ -281,7 +327,7 @@ export default function GroupManager() {
         cancelText={t('common.cancel')}
         onOk={handleOk}
         onCancel={() => setModal(null)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           {modal?.mode !== 'move' ? (

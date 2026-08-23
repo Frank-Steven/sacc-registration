@@ -107,7 +107,7 @@ export default function Templates() {
         title={modal.tpl ? t('common.edit') : t('admin.tpl.new')}
         onOk={handleSave}
         onCancel={() => setModal({ open: false, tpl: null })}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label={t('admin.tpl.name')} rules={[{ required: true, message: t('admin.tpl.name') }]}>

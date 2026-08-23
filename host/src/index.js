@@ -7,6 +7,7 @@ import { WasmRuntime } from './wasm-runtime/runtime.js';
 import { runMigrations } from './db/migrate.js';
 import { scheduleDailyBackup } from './task/backup.js';
 import { scheduleNotify } from './task/notify.js';
+import { createMailer } from './mail/smtp.js';
 import { createRoutes } from './http/routes.js';
 import { createServer } from './http/server.js';
 
@@ -54,7 +55,8 @@ async function main() {
   scheduleDailyBackup({ runtime, wasmPath: config.wasmPath, dbPath: config.dbPath });
 
   // 4.1 通知任务（活动提醒 + 邮件队列；SMTP 未配置时仅提醒、邮件保持待发送）
-  scheduleNotify({ runtime, sendMail: null });
+  // M8：邮件发送器动态读 system_config（官方邮箱 / SMTP），未配置时发送抛错、队列保持待发送
+  scheduleNotify({ runtime, sendMail: createMailer({ runtime }) });
 
   // 5. HTTP 服务
   const server = createServer({

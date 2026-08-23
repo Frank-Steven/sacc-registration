@@ -1,14 +1,16 @@
+import { useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Space, Typography, Breadcrumb, App as AntApp, theme } from 'antd';
+import { Layout, Menu, Avatar, Drawer, Button, Dropdown, Grid, Space, Typography, Breadcrumb, App as AntApp, theme } from 'antd';
 import {
-  UserOutlined, LogoutOutlined, HomeOutlined, DashboardOutlined, FileTextOutlined, ToolOutlined,
+  MenuFoldOutlined, UserOutlined, LogoutOutlined, HomeOutlined, DashboardOutlined, FileTextOutlined, ToolOutlined,
   ApartmentOutlined, TeamOutlined, SafetyCertificateOutlined, SettingOutlined, FileSearchOutlined, DatabaseOutlined,
 } from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/auth.js';
 import { authApi } from '../api/index.js';
 import { adminRoleApi } from '../api/admin.js';
 import AppSettings from '../components/AppSettings.jsx';
+import PullToRefresh from '../components/PullToRefresh.jsx';
 import { t, useI18n } from '../utils/i18n/index.js';
 import { useDocumentTitle } from '../utils/useDocumentTitle.js';
 
@@ -17,10 +19,15 @@ const { Header, Sider, Content } = Layout;
 // M6 管理端布局：菜单 = 概览 / 活动管理 / 模板（role 1/2）+ 活动运营子菜单（选中活动后）
 export default function AdminLayout() {
   const { user, logout } = useAuthStore();
+  const screens = Grid.useBreakpoint();
+  // md 以下视为移动端（Sider breakpoint="lg" 已自动收起，此时用抽屉菜单）
+  const isMobile = screens.lg === false;
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const { message } = AntApp.useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const { token: antToken } = theme.useToken();
+  const queryClient = useQueryClient();
   const uid = useAuthStore((s) => s.user?.uid);
   const { data } = useQuery({
     queryKey: ['my-roles', uid],
@@ -113,16 +120,26 @@ export default function AdminLayout() {
   const openKeys = activityId ? [opPrefix] : [];
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className={isMobile ? 'app-shell' : undefined} style={{ minHeight: '100vh' }}>
       <Sider breakpoint="lg" collapsedWidth={0} width={200}>
         <div style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', padding: '16px 0' }}>
           {t('brand.admin')}
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[selected]} defaultOpenKeys={openKeys} items={menuItems} />
       </Sider>
-      <Layout>
-        <Header style={{ background: antToken.colorBgContainer, paddingInline: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Breadcrumb items={[{ title: t('nav.admin') }]} />
+      <Layout style={{ minHeight: 0 }}>
+        <Header style={{ background: antToken.colorBgContainer, paddingInline: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexShrink: 0, position: 'sticky', top: 0, zIndex: 100 }}>
+          <Space size={8} style={{ minWidth: 0 }}>
+            {isMobile && (
+              <Button
+                type="text"
+                aria-label={t('admin.menu.mobile_toggle')}
+                icon={<MenuFoldOutlined style={{ fontSize: 18 }} />}
+                onClick={() => setDrawerOpen(true)}
+              />
+            )}
+            {!isMobile && <Breadcrumb items={[{ title: t('nav.admin') }]} />}
+          </Space>
           <Space size={8}>
             <AppSettings dark />
             <Dropdown
@@ -138,16 +155,57 @@ export default function AdminLayout() {
               }}
             >
               <Space style={{ cursor: 'pointer' }}>
-                <Avatar size="small" style={{ backgroundColor: '#1677ff' }} icon={<UserOutlined />} />
-                <Typography.Text>{user?.name || user?.username}</Typography.Text>
+                <Avatar size="small" src={user?.avatar || undefined} style={{ backgroundColor: '#1677ff' }} icon={<UserOutlined />} />
+                {!isMobile && <Typography.Text>{user?.name || user?.username}</Typography.Text>}
               </Space>
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ padding: 24 }}>
-          <Outlet />
+        <Content
+          data-mob-scroll={isMobile ? '' : undefined}
+          style={{
+            padding: isMobile ? 12 : 24,
+            // M9 移动端：内容区独立滚动，滚动条不与顶部栏重叠（外层 app-shell 锁定视口）
+            flex: 1,
+            minHeight: 0,
+            overflowY: isMobile ? 'auto' : undefined,
+            WebkitOverflowScrolling: isMobile ? 'touch' : undefined,
+          }}
+        >
+          {/* M9：移动端布局级下拉刷新覆盖管理端所有页面；下拉触发全量失效重拉 */}
+          {isMobile ? (
+            <PullToRefresh onRefresh={() => queryClient.invalidateQueries()}>
+              <Outlet />
+            </PullToRefresh>
+          ) : (
+            <Outlet />
+          )}
         </Content>
       </Layout>
+
+      {/* 移动端：抽屉全量菜单（含系统管理 3 组），点击菜单项后关闭 */}
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        placement="left"
+        width={240}
+        closable={false}
+        styles={{ body: { padding: 0, background: '#001529' } }}
+      >
+        <div style={{ color: '#fff', fontSize: 16, fontWeight: 600, textAlign: 'center', padding: '16px 0' }}>
+          {t('brand.admin')}
+        </div>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[selected]}
+          defaultOpenKeys={openKeys}
+          items={menuItems}
+          onClick={({ key }) => {
+            if (key.startsWith('/')) setDrawerOpen(false);
+          }}
+        />
+      </Drawer>
     </Layout>
   );
 }

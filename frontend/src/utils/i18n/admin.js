@@ -20,6 +20,7 @@ export const admin = {
   'admin.menu.activities': { zh: '活动管理', en: 'Activities' },
   'admin.menu.templates': { zh: '模板管理', en: 'Templates' },
   'admin.menu.operations': { zh: '报名运营', en: 'Operations' },
+  'admin.menu.mobile_toggle': { zh: '打开菜单', en: 'Open menu' },
   'admin.menu.roster': { zh: '名单', en: 'Roster' },
   'admin.menu.review': { zh: '审核', en: 'Review' },
   'admin.menu.checkin': { zh: '签到', en: 'Check-in' },
@@ -358,6 +359,14 @@ export const admin = {
   'admin.sys.config.group_site': { zh: '站点', en: 'Site' },
   'admin.sys.config.group_upload': { zh: '上传', en: 'Upload' },
   'admin.sys.config.group_checkin': { zh: '签到', en: 'Check-in' },
+  // 邮件服务（M8）：官方邮箱 / SMTP
+  'admin.sys.config.group_mail': { zh: '邮件服务', en: 'Mail service' },
+  'admin.sys.config.mail_from': { zh: '官方发件邮箱', en: 'Official sender email' },
+  'admin.sys.config.smtp_host': { zh: 'SMTP 服务器', en: 'SMTP host' },
+  'admin.sys.config.smtp_port': { zh: 'SMTP 端口', en: 'SMTP port' },
+  'admin.sys.config.smtp_user': { zh: 'SMTP 账号', en: 'SMTP user' },
+  'admin.sys.config.smtp_pass': { zh: 'SMTP 密码', en: 'SMTP password' },
+  'admin.sys.config.mail_hint': { zh: '用于发送密码重置验证码与通知邮件；未配置时邮件保持待发送', en: 'Used to send password-reset codes and notification emails; mails stay queued when unset' },
   'admin.sys.config.save_ok': { zh: '已保存 ✓', en: 'Saved ✓' },
   'admin.sys.config.value_unset': { zh: '未配置', en: 'Unset' },
 

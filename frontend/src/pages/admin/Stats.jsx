@@ -65,17 +65,17 @@ export default function Stats() {
   return (
     <SpaceVertical>
       <Card size="small" loading={isFetching}>
-        <Row gutter={16}>
-          <Col span={5}><Statistic title={t('admin.stats.capacity')} value={capacity} /></Col>
-          <Col span={5}><Statistic title={t('admin.stats.taken')} value={stats?.taken ?? 0} /></Col>
-          <Col span={5}><Statistic title={t('admin.stats.pending')} value={stats?.pending ?? 0} /></Col>
-          <Col span={4}><Statistic title={t('admin.stats.waitlist')} value={stats?.waitlist ?? 0} /></Col>
-          <Col span={5}><Statistic title={t('admin.stats.checked_in')} value={stats?.checked_in ?? 0} /></Col>
+        <Row gutter={[16, 16]}>
+          <Col xs={12} md={5}><Statistic title={t('admin.stats.capacity')} value={capacity} /></Col>
+          <Col xs={12} md={5}><Statistic title={t('admin.stats.taken')} value={stats?.taken ?? 0} /></Col>
+          <Col xs={12} md={5}><Statistic title={t('admin.stats.pending')} value={stats?.pending ?? 0} /></Col>
+          <Col xs={12} md={4}><Statistic title={t('admin.stats.waitlist')} value={stats?.waitlist ?? 0} /></Col>
+          <Col xs={12} md={5}><Statistic title={t('admin.stats.checked_in')} value={stats?.checked_in ?? 0} /></Col>
         </Row>
       </Card>
 
-      <Row gutter={16}>
-        <Col span={10}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={10}>
           <Card size="small" title={t('admin.stats.status_dist')}>
             <Table
               rowKey="status"
@@ -87,7 +87,7 @@ export default function Stats() {
             />
           </Card>
         </Col>
-        <Col span={14}>
+        <Col xs={24} lg={14}>
           <Card size="small" title={t('admin.stats.field_dist')}>
             <Table
               rowKey="field_id"
@@ -95,6 +95,7 @@ export default function Stats() {
               pagination={false}
               dataSource={fieldDist}
               columns={fieldColumns}
+              scroll={{ x: 420 }}
               locale={{ emptyText: t('admin.stats.no_data') }}
             />
           </Card>

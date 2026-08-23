@@ -40,7 +40,7 @@ export default function TemplatePicker({ open, activityId, onClose, onApplied })
       onOk={doApply}
       onCancel={onClose}
       okButtonProps={{ disabled: !tid, loading: applying }}
-      destroyOnClose
+      destroyOnHidden
     >
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: 24 }}>

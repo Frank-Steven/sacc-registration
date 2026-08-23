@@ -191,6 +191,7 @@ export default function Checkin() {
           loading={isFetching}
           dataSource={approvedFiltered}
           columns={columns}
+          scroll={{ x: 560 }}
           pagination={{ pageSize: 20, showSizeChanger: false }}
         />
       </Card>

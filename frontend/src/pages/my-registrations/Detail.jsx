@@ -165,7 +165,7 @@ export default function RegistrationDetail() {
         onOk={submitCode}
         okButtonProps={{ loading: codeSubmitting }}
         onCancel={() => setCodeOpen(false)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
           <Text type="secondary">{t('reg.checkin_code_ph')}</Text>

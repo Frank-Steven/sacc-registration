@@ -14,6 +14,32 @@ html, body, #root {
   background: var(--app-bg);
 }
 
+/* M9 移动端视口固定：顶栏/底栏常驻、内容区独立滚动（滚动条不与顶/底栏重叠）。
+   dvh 支持时严格锁定视口高度，否则回退 100vh。 */
+.app-shell {
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+@supports (height: 100dvh) {
+  .app-shell {
+    height: 100dvh;
+  }
+}
+
+/* M9 内容区滚动条：细窄不突兀，暗色主题下用中性色 */
+[data-mob-scroll]::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+[data-mob-scroll]::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 2px;
+}
+html[data-theme='dark'] [data-mob-scroll]::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
@@ -35,4 +61,34 @@ a { text-decoration: none; }
 .ant-tree-node-content-wrapper:hover .tree-node-actions,
 .tree-node-actions:focus-within {
   opacity: 1;
+}
+
+/* ===== M7 手机版（responsive-design.md 六）：安全区 / 触控目标 ===== */
+@media (max-width: 767.98px) {
+  /* 触控目标 ≥44px：表格操作列按钮放大（触控化） */
+  .ant-table-cell .ant-btn-link,
+  .ant-table-cell .ant-btn-text {
+    min-height: 40px;
+    padding-inline: 12px;
+  }
+
+  /* 分组树节点操作图标：移动端常显（无 hover），触控可点 */
+  .tree-node-actions {
+    opacity: 1;
+  }
+
+  /* 移动端底部固定操作条 / TabBar 安全区 */
+  .mob-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* 表格在小屏不缩放：横向滚动容器已有 scroll x，补最小行高便于点按 */
+  .ant-table-tbody > tr > td {
+    min-height: 44px;
+  }
+
+  /* 抽屉 / 弹窗在小屏留出底部安全区 */
+  .ant-drawer-content {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }

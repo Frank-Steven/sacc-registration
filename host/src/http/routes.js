@@ -7,6 +7,8 @@ import path from 'node:path';
 import { Errors } from '../errors.js';
 import { signJwt, verifyJwt, bearerToken } from '../auth/jwt.js';
 import { createBackup } from '../task/backup.js';
+import { createMailer } from '../mail/smtp.js';
+import { logger } from '../logger.js';
 
 // 解析 Bearer token 并校验，返回 { uid, username }；无效返回 null
 function requireAuth(ctx, config) {
@@ -118,7 +120,23 @@ export function createRoutes({ runtime, config }) {
     {
       method: 'POST',
       pattern: /^\/api\/auth\/password\/reset$/,
-      handler: (ctx) => runtime.invoke({ op: 'auth.reset_request', args: ctx.body }),
+      handler: async (ctx) => {
+        const out = await runtime.invoke({ op: 'auth.reset_request', args: ctx.body });
+        // M8：官方邮箱配置后发送验证码邮件；发送失败不影响接口成功（防账号枚举），仅记录日志
+        if (out.code === Errors.OK && out.data?.token) {
+          try {
+            const mailer = createMailer({ runtime });
+            await mailer({
+              to: String(ctx.body?.email || ''),
+              subject: '密码重置验证',
+              text: `您的密码重置验证令牌：${out.data.token}\n（1 小时内有效，请勿泄露）`,
+            });
+          } catch (err) {
+            logger.warn('password reset mail send failed', { err: err.message });
+          }
+        }
+        return out;
+      },
     },
     {
       method: 'POST',

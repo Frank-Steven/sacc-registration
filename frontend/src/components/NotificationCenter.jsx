@@ -90,7 +90,7 @@ export default function NotificationCenter({ type }) {
         open={!!detail}
         onCancel={() => setDetail(null)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         {detail && (
           <Flex vertical gap={12}>

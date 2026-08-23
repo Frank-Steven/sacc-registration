@@ -40,13 +40,14 @@ export const NotifyType = Object.freeze({
   1: { text: '审核结果', color: 'processing' },
   2: { text: '活动提醒', color: 'warning' },
   3: { text: '候补', color: 'volcano' },
+  4: { text: '邮件发送失败', color: 'error' },
 });
 
-// 通知渠道：0 站内信 / 1 邮件
-export const NotifyChannel = Object.freeze({
-  0: { text: '站内信' },
-  1: { text: '邮件' },
-});
+// 通知渠道（M8 起支持复选）：1=站内信 / 2=邮箱 / 3=两者（bitmask）
+export const NotifyChannel = Object.freeze([
+  { value: 1, text: '站内信' },
+  { value: 2, text: '邮箱' },
+]);
 
 // 常用信息内置模板（报名表单预填数据源，field_key 与 form_field.field_key 对齐约定）
 export const CommonInfoTemplates = Object.freeze([

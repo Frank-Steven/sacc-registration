@@ -257,7 +257,7 @@ export default function FormDesigner({ activityId, readOnly }) {
         title={groupModal.form ? t('admin.act.edit') : t('admin.design.add_group')}
         onOk={saveGroup}
         onCancel={() => setGroupModal({ open: false, form: null })}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={groupForm} layout="vertical">
           <Form.Item name="name" label={t('admin.design.group_name')} rules={[{ required: true, message: t('admin.design.group_name') }]}>
@@ -282,7 +282,7 @@ export default function FormDesigner({ activityId, readOnly }) {
         onOk={saveField}
         onCancel={() => setFieldModal({ open: false, formId: null, field: null })}
         width={560}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={fieldForm} layout="vertical">
           <Form.Item
@@ -335,7 +335,7 @@ export default function FormDesigner({ activityId, readOnly }) {
         onOk={saveTemplate}
         okButtonProps={{ loading: savingTpl }}
         onCancel={() => setTplModalOpen(false)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Input placeholder={t('admin.design.tpl_name')} value={tplName} onChange={(e) => setTplName(e.target.value)} maxLength={50} />
       </Modal>

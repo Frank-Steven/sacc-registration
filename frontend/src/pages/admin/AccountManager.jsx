@@ -280,7 +280,7 @@ export default function AccountManager() {
         width={480}
         footer={null}
         onCancel={() => setResetPwd(null)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
           {resetPwd?.user?.username} · {t('admin.sys.accounts.new_password_hint', { n: 10 })}

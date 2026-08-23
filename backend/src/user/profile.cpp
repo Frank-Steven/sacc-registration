@@ -71,6 +71,22 @@ nlohmann::json user_update(Db& db, const nlohmann::json& args) {
     sql += "email = ?, ";
     params.push_back(v);
   }
+  if (args.contains("lang")) {
+    // M9：界面语言偏好保留到用户数据（zh / en）
+    const std::string v = cfg_str(args, "lang");
+    if (v != "zh" && v != "en") return cfg_err(kValidation, "lang 须为 zh 或 en");
+    sql += "lang = ?, ";
+    params.push_back(v);
+  }
+  if (args.contains("avatar")) {
+    // M9：头像 base64 data URL（空串=清除）；限制体积避免单行过大
+    const std::string v = cfg_str(args, "avatar");
+    const bool isDataUrl = v.rfind("data:image/", 0) == 0 && v.find(";base64,") != std::string::npos;
+    if (!v.empty() && !isDataUrl) return cfg_err(kValidation, "avatar 须为 data:image/*;base64 格式");
+    if (v.size() > 400000) return cfg_err(kValidation, "头像文件过大（超过约 300KB）");
+    sql += "avatar = ?, ";
+    params.push_back(v);
+  }
   if (params.empty()) return cfg_ok({{"ok", true}});  // 无可更新字段
   sql.resize(sql.size() - 2);
   sql += " WHERE uid = ?;";
@@ -146,7 +162,8 @@ nlohmann::json user_notify_pref_set(Db& db, const nlohmann::json& args) {
   // 通知类型（notification.md / registration.md）：0 报名成功 / 1 审核结果 / 2 活动提醒 / 3 递补
   if (notify_type < 0 || notify_type > 3) return cfg_err(kValidation, "notify_type 须为 0~3");
   const std::int64_t channel = cfg_int(args, "channel", -1);
-  if (channel != 0 && channel != 1) return cfg_err(kValidation, "channel 须为 0（站内信）或 1（邮件）");
+  // M8：渠道 bitmask（1=站内信 / 2=邮箱 / 3=两者）
+  if (channel < 1 || channel > 3) return cfg_err(kValidation, "channel 须为 1（站内信）/ 2（邮箱）/ 3（两者）");
   if (db.execParams("INSERT INTO user_notify_pref (uid, notify_type, channel, updated_at) "
                     "VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(uid, notify_type) DO UPDATE SET channel = excluded.channel, "

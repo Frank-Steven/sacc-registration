@@ -65,9 +65,9 @@ export default function Workbench() {
   };
 
   return (
-    <div>
-      <Title level={4}>{t('nav.workbench')}</Title>
-      <Card size="small" style={{ marginBottom: 16 }}>
+    <>
+    <Title level={4}>{t('nav.workbench')}</Title>
+    <Card size="small" style={{ marginBottom: 16 }}>
         <Space wrap>
           <Link to="/activities">
             <Button type="primary">{t('nav.activities')}</Button>
@@ -129,6 +129,6 @@ export default function Workbench() {
           />
         )}
       </Card>
-    </div>
+    </>
   );
 }

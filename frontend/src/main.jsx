@@ -37,8 +37,10 @@ function AppProviders() {
   const locale = usePreferencesStore((s) => s.locale);
   const token = useAuthStore((s) => s.token);
   const applyRemotePrefs = usePreferencesStore((s) => s.applyRemotePrefs);
+  // M9：语言偏好保留在用户数据（user.lang）；登录后 me 返回 lang，覆盖本地会话
+  const userLang = useAuthStore((s) => s.user?.lang);
 
-  // 已登录：从服务端拉取界面偏好（theme/locale）并覆盖本地（跨设备同步）
+  // 已登录：从服务端拉取界面偏好（theme）并覆盖本地（跨设备同步）；语言随 user.lang 走
   useQuery({
     queryKey: ['me-prefs'],
     enabled: Boolean(token),
@@ -49,6 +51,13 @@ function AppProviders() {
       return items;
     },
   });
+
+  // user.lang → 界面语言（不触发回写，避免循环）；未登录用本地 locale
+  useEffect(() => {
+    if (userLang === 'zh' || userLang === 'en') {
+      usePreferencesStore.setState((s) => (s.locale === userLang ? s : { locale: userLang }));
+    }
+  }, [userLang]);
 
   // 同步 CSS 变量（body 背景等非 antd 样式的暗色适配）
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { App, Button, Card, Checkbox, Drawer, Empty, Form, Popconfirm, Select, Space, Spin, Table, Typography } from 'antd';
+import { App, Button, Card, Checkbox, Drawer, Empty, Form, Grid, Popconfirm, Select, Space, Spin, Table, Typography } from 'antd';
 import { CheckOutlined, CloseOutlined, PlusOutlined, UserOutlined } from '@ant-design/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminAccountApi, adminRoleApi } from '../../api/admin.js';
@@ -28,6 +28,8 @@ export default function RoleManager() {
   useDocumentTitle();
   const { message } = App.useApp();
   const queryClient = useQueryClient();
+  const screens = Grid.useBreakpoint();
+  const isMobile = screens.lg === false;
   const [params, setParams] = useSearchParams();
   const [user, setUser] = useState(null); // { uid, username, name }
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -144,12 +146,12 @@ export default function RoleManager() {
       </div>
 
       <Card>
-        {/* 用户选择 */}
-        <Form layout="inline" style={{ marginBottom: 16 }}>
-          <Form.Item label={<UserOutlined />} style={{ marginBottom: 0 }}>
+        {/* 用户选择（移动端自适应宽度，避免横向溢出） */}
+        <Form layout="inline" style={{ marginBottom: 16, rowGap: 8 }}>
+          <Form.Item label={<UserOutlined />} style={{ marginBottom: 0, flex: 1, minWidth: 0 }}>
             <Select
               showSearch
-              style={{ width: 340 }}
+              style={{ width: '100%' }}
               placeholder={t('admin.sys.roles.user_ph')}
               filterOption={false}
               loading={userFetching}
@@ -256,9 +258,9 @@ export default function RoleManager() {
       <Drawer
         open={drawerOpen}
         title={t('admin.sys.roles.grant_title')}
-        width={440}
+        width={isMobile ? '100%' : 440}
         onClose={() => setDrawerOpen(false)}
-        destroyOnClose
+        destroyOnHidden
         extra={
           <Link to={`/admin/accounts?keyword=${encodeURIComponent(user?.username || '')}`}>
             <Text type="secondary">{user?.username}</Text>

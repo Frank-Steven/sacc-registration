@@ -98,6 +98,8 @@ nlohmann::json profileOf(const nlohmann::json& row) {
       {"college", row.value("college", "")},
       {"phone", row.value("phone", "")},
       {"email", row.value("email", "")},
+      {"lang", row.value("lang", "zh")},
+      {"avatar", row.value("avatar", "")},
       {"created_at", row.value("created_at", 0)},
   };
 }
@@ -108,7 +110,7 @@ bool loadProfile(Db& db, std::int64_t uid, nlohmann::json& out_row) {
   std::string qerr;
   const int rc = db.query(
       "SELECT a.uid, a.username, a.status, u.name, u.student_id, u.college, u.phone, u.email, "
-      "u.created_at FROM account a JOIN \"user\" u ON u.uid = a.uid WHERE a.uid = ?;",
+      "u.lang, u.avatar, u.created_at FROM account a JOIN \"user\" u ON u.uid = a.uid WHERE a.uid = ?;",
       nlohmann::json::array({uid}), rows, qerr);
   if (rc != SQLITE_OK || rows.empty()) return false;
   out_row = std::move(rows[0]);

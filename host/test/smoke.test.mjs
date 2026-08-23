@@ -47,7 +47,7 @@ test('migrations: 空库初始化为最新版本并建全部表', async () => {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 6);
+    assert.equal(version, 8);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
@@ -69,8 +69,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 6);
-    assert.equal(v2, 6);
+    assert.equal(v1, 8);
+    assert.equal(v2, 8);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -1015,6 +1015,247 @@ test('http M7: 账号管理 / 数据统计 / 备份管理（超管隔离 + 下�
     assert.equal((await (await get('/api/admin/backups/..%2Fsacc_test.db', rootH)).json()).code, 422, '编码斜杠留在文件名 → BACKUP_RE 拒绝');
     assert.equal((await (await get('/api/admin/backups/not-a-backup.txt', rootH)).json()).code, 422);
     assert.equal((await (await get('/api/admin/backups/sacc-20260101-000000.db', rootH)).json()).code, 404, '命名合法但不存在 → 404');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http M8: 通知渠道复选（bitmask）/ 官方邮箱配置 / 邮件队列（双通道 + 失败站内提示）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m8-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+
+  const { flushMailQueue } = await import('../src/task/notify.js');
+
+  try {
+    // 注册：root 超管 / u1、u2、u3（均有邮箱）
+    const regRoot = await (await post('/api/auth/register', { username: 'root', password: 'secret1234' })).json();
+    const rootUid = regRoot.data.user.uid;
+    const rootH = { authorization: `Bearer ${regRoot.data.token}` };
+    const reg1 = await (await post('/api/auth/register', { username: 'user01', password: 'secret1234', email: 'u1@example.com' })).json();
+    const u1H = { authorization: `Bearer ${reg1.data.token}` };
+    const reg2 = await (await post('/api/auth/register', { username: 'user02', password: 'secret1234', email: 'u2@example.com' })).json();
+    const u2H = { authorization: `Bearer ${reg2.data.token}` };
+    const reg3 = await (await post('/api/auth/register', { username: 'user03', password: 'secret1234', email: 'u3@example.com' })).json();
+    const u3H = { authorization: `Bearer ${reg3.data.token}` };
+    await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${rootUid}, 1, NULL);` },
+    });
+
+    // ===== B1：超管配置官方邮箱（system_config 邮件 key）；非超管 403；非法 key 422 =====
+    const setCfg = await (await put('/api/admin/system/config', {
+      items: [
+        { key: 'mail_from', value: 'no-reply@example.org' },
+        { key: 'smtp_host', value: 'smtp.example.org' },
+        { key: 'smtp_port', value: '465' },
+        { key: 'smtp_user', value: 'sacc' },
+        { key: 'smtp_pass', value: 'topsecret' },
+      ],
+    }, rootH)).json();
+    assert.equal(setCfg.code, 0);
+    assert.equal((await (await get('/api/admin/system/config', u1H)).json()).code, 403, '非超管不可读系统配置');
+    const cfgList = await (await get('/api/admin/system/config', rootH)).json();
+    assert.equal(cfgList.code, 0);
+    const mailCfg = cfgList.data.items.filter((i) => i.key === 'mail_from' || i.key.startsWith('smtp'));
+    assert.equal(mailCfg.length, 5);
+    assert.equal(mailCfg.find((i) => i.key === 'smtp_pass').value, 'topsecret');
+    assert.equal((await (await put('/api/admin/system/config', { items: [{ key: 'evil', value: 'x' }] }, rootH)).json()).code, 422);
+
+    // ===== B2：偏好复选（channel=3 站内+邮箱）→ 提交报名 → 双通道通知 =====
+    const act = await (await post('/api/admin/activities', { name: 'M8 Expo', need_review: false, max_slots: 0 }, rootH)).json();
+    assert.equal(act.code, 0);
+    const act1 = act.data.activity_id;
+    assert.equal((await (await put(`/api/admin/activities/${act1}`, { status: 1 }, rootH)).json()).code, 0);
+
+    assert.equal((await (await put('/api/me/notify-prefs', { notify_type: 0, channel: 3 }, u1H)).json()).code, 0);
+    const prefs = await (await get('/api/me/notify-prefs', u1H)).json();
+    assert.equal(prefs.code, 0);
+    assert.equal(prefs.data.items.find((i) => i.notify_type === 0).channel, 3);
+
+    const r1 = await (await post(`/api/activities/${act1}/registration`, {}, u1H)).json();
+    assert.equal(r1.code, 0);
+    assert.equal((await (await post(`/api/me/registrations/${r1.data.registration_id}/submit`, {}, u1H)).json()).code, 0);
+
+    // 双通道落库：channel=0 send_status=1（站内直写）+ channel=1 send_status=0（邮件入队）
+    const dual = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT channel, send_status FROM notification WHERE uid = ? AND type = 0 ORDER BY notification_id;', params: [reg1.data.user.uid] },
+    });
+    assert.equal(dual.code, 0);
+    assert.equal(dual.data.rows.length, 2);
+    assert.deepEqual(dual.data.rows[0].channel, 0);
+    assert.deepEqual(dual.data.rows[0].send_status, 1);
+    assert.deepEqual(dual.data.rows[1].channel, 1);
+    assert.deepEqual(dual.data.rows[1].send_status, 0);
+
+    // 通知中心仅站内信（channel=0），未读 1
+    const mine = await (await get('/api/me/notifications', u1H)).json();
+    assert.equal(mine.code, 0);
+    assert.equal(mine.data.total, 1);
+    assert.equal(mine.data.items[0].channel, 0);
+    assert.equal((await (await get('/api/me/notifications/unread-count', u1H)).json()).data.count, 1);
+
+    // ===== B3：flushMailQueue 成功 → send_status=1，收件人/主题正确 =====
+    const sentMails = [];
+    const ok = await flushMailQueue({ runtime, sendMail: async (m) => { sentMails.push(m); } });
+    assert.equal(ok.sent, 1);
+    assert.equal(ok.failed, 0);
+    assert.equal(sentMails.length, 1);
+    assert.equal(sentMails[0].to, 'u1@example.com');
+    assert.equal(sentMails[0].subject, '报名成功');
+    const sentRow = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT send_status FROM notification WHERE uid = ? AND type = 0 AND channel = 1;', params: [reg1.data.user.uid] },
+    });
+    assert.equal(sentRow.data.rows[0].send_status, 1);
+
+    // ===== B4：发送失败（首次）→ 回队列重试 + 站内提示 type 4（含失败原因与原消息内容）=====
+    assert.equal((await (await put('/api/me/notify-prefs', { notify_type: 0, channel: 3 }, u2H)).json()).code, 0);
+    const r2 = await (await post(`/api/activities/${act1}/registration`, {}, u2H)).json();
+    assert.equal(r2.code, 0);
+    assert.equal((await (await post(`/api/me/registrations/${r2.data.registration_id}/submit`, {}, u2H)).json()).code, 0);
+    const fail = await flushMailQueue({ runtime, sendMail: async () => { throw new Error('connection refused'); } });
+    assert.equal(fail.failed, 1);
+    const mailRow = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT send_status, attempt_count FROM notification WHERE uid = ? AND type = 0 AND channel = 1;', params: [reg2.data.user.uid] },
+    });
+    assert.equal(mailRow.data.rows[0].send_status, 0, '发送异常回队列待重试');
+    assert.equal(mailRow.data.rows[0].attempt_count, 1);
+    const failNotices = await (await get('/api/me/notifications', u2H)).json();
+    assert.equal(failNotices.code, 0);
+    const t4 = failNotices.data.items.find((n) => n.type === 4);
+    assert.ok(t4, '应有邮件发送失败站内提示');
+    assert.ok(t4.content.includes('【报名成功】'), '提示含原消息标题');
+    assert.match(t4.content, /connection refused/, '提示含失败原因');
+    assert.match(t4.content, /您已成功报名/, '提示含原消息内容');
+
+    // ===== B5：无邮箱 → send_status=2 永久终止 + 站内提示一次 =====
+    // u3 仅邮箱（channel=2）→ 报名 → 只生成邮件队列行（无站内信）
+    assert.equal((await (await put('/api/me/notify-prefs', { notify_type: 0, channel: 2 }, u3H)).json()).code, 0);
+    const r3 = await (await post(`/api/activities/${act1}/registration`, {}, u3H)).json();
+    assert.equal(r3.code, 0);
+    assert.equal((await (await post(`/api/me/registrations/${r3.data.registration_id}/submit`, {}, u3H)).json()).code, 0);
+    const onlyMail = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT channel FROM notification WHERE uid = ? AND type = 0;', params: [reg3.data.user.uid] },
+    });
+    assert.deepEqual(onlyMail.data.rows.map((x) => x.channel), [1], '仅邮箱偏好 → 只生成邮件队列行');
+    // 清空邮箱 → flush：u2 重试成功，u3 无邮箱置 2 终止 + 站内提示
+    assert.equal((await (await put('/api/me/profile', { email: '' }, u3H)).json()).code, 0);
+    const noMail = await flushMailQueue({ runtime, sendMail: async () => {} });
+    assert.equal(noMail.sent, 1, 'u2 待重试邮件发送成功');
+    assert.equal(noMail.failed, 1, 'u3 无邮箱判为失败');
+    const term = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT send_status FROM notification WHERE uid = ? AND type = 0 AND channel = 1;', params: [reg3.data.user.uid] },
+    });
+    assert.equal(term.data.rows[0].send_status, 2, '无邮箱永久终止，不再重试');
+    const u3Notices = await (await get('/api/me/notifications', u3H)).json();
+    assert.equal(u3Notices.code, 0);
+    assert.ok(u3Notices.data.items.some((n) => n.type === 4 && /收件人未填写邮箱/.test(n.content)), '无邮箱 → 站内提示');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('http M9: 头像与语言偏好保留到用户数据（lang 入 user / theme 留 user_pref）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const server = createServer({
+    runtime,
+    routes: createRoutes({ runtime, config: { jwtSecret: 'http-m9-secret' } }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+  const put = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body ?? {}),
+    });
+
+  try {
+    const reg = await (await post('/api/auth/register', { username: 'lang01', password: 'secret1234', email: 'l1@example.com' })).json();
+    assert.equal(reg.code, 0);
+    const uid = reg.data.user.uid;
+    const h = { authorization: `Bearer ${reg.data.token}` };
+
+    // 注册默认：lang=zh、avatar 空
+    let me = await (await get('/api/auth/me', h)).json();
+    assert.equal(me.code, 0);
+    assert.equal(me.data.lang, 'zh');
+    assert.equal(me.data.avatar, '');
+
+    // 语言偏好写入 user 数据（不再存 user_pref.locale）
+    assert.equal((await (await put('/api/me/profile', { lang: 'en' }, h)).json()).code, 0);
+    me = await (await get('/api/auth/me', h)).json();
+    assert.equal(me.data.lang, 'en');
+    assert.equal((await (await put('/api/me/profile', { lang: 'zh' }, h)).json()).code, 0);
+    assert.equal((await (await put('/api/me/profile', { lang: 'fr' }, h)).json()).code, 422, '非法语言 → 422');
+    assert.equal((await (await put('/api/me/profile', { lang: '' }, h)).json()).code, 422, '空语言 → 422');
+
+    // 头像：非法值 / 超限 → 422；合法 data URL 保存后回读一致；空串清除
+    assert.equal((await (await put('/api/me/profile', { avatar: 'https://example.com/a.png' }, h)).json()).code, 422, '非 data URL → 422');
+    const tooBig = `data:image/png;base64,${'A'.repeat(400001)}`;
+    assert.equal((await (await put('/api/me/profile', { avatar: tooBig }, h)).json()).code, 422, '超过 400000 字符 → 422');
+    const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    assert.equal((await (await put('/api/me/profile', { avatar }, h)).json()).code, 0);
+    me = await (await get('/api/auth/me', h)).json();
+    assert.equal(me.data.avatar, avatar);
+    assert.equal((await (await put('/api/me/profile', { avatar: '' }, h)).json()).code, 0);
+    me = await (await get('/api/auth/me', h)).json();
+    assert.equal(me.data.avatar, '', '空串清除头像');
+
+    // theme 仍保留在 user_pref（而非 user 表）
+    assert.equal((await (await put('/api/me/prefs', { pref_key: 'theme', pref_value: 'dark' }, h)).json()).code, 0);
+    const prefs = await (await get('/api/me/prefs', h)).json();
+    assert.equal(prefs.code, 0);
+    assert.equal(prefs.data.items.find((i) => i.pref_key === 'theme').pref_value, 'dark');
+    me = await (await get('/api/auth/me', h)).json();
+    assert.equal(me.data.theme, undefined, 'theme 不属于 user 表字段');
+    // 直接查库：user.lang 落库为 zh（最后设置为 zh），user_pref 无 locale 残留
+    const row = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT lang FROM "user" WHERE uid = ?;', params: [uid] },
+    });
+    assert.equal(row.code, 0);
+    assert.equal(row.data.rows[0].lang, 'zh');
+    const locale = await runtime.invoke({
+      op: 'db.query',
+      args: { sql: 'SELECT pref_key FROM user_pref WHERE uid = ? AND pref_key = \'locale\';', params: [uid] },
+    });
+    assert.equal(locale.data.rows.length, 0, '语言偏好不再写入 user_pref.locale');
   } finally {
     await new Promise((resolve) => server.close(resolve));
     rmSync(tmp, { recursive: true, force: true });

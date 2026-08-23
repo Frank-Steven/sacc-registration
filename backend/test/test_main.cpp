@@ -37,6 +37,13 @@ json invoke(sacc::Db& db, const std::string& req) {
 int main() {
   sacc::Db db;
 
+  // M9：loadProfile 需要 user.lang/avatar 列；0008 迁移依赖 user_pref（0006），对只建部分
+  // schema 的测试块，此处直接补两列即可（exec 不改变 user_version）
+  const auto ensureLangAvatar = [](sacc::Db& d) {
+    CHECK(d.exec("ALTER TABLE \"user\" ADD COLUMN avatar TEXT NOT NULL DEFAULT '';") == SQLITE_OK);
+    CHECK(d.exec("ALTER TABLE \"user\" ADD COLUMN lang TEXT NOT NULL DEFAULT 'zh';") == SQLITE_OK);
+  };
+
   // ping / echo / sys.version
   json r = invoke(db, R"({"op":"ping"})");
   CHECK(r["code"] == 0 && r["data"]["pong"] == true);
@@ -128,6 +135,7 @@ int main() {
       ss << f.rdbuf();
       CHECK(adb.migrate(ss.str(), 1) == SQLITE_OK);
     }
+    ensureLangAvatar(adb);
 
     // 注册成功：返回资料且不含敏感字段
     r = invoke(adb, R"({"op":"auth.register","args":{"username":"alice","password":"secret1234","name":"Alice","email":"alice@example.com"}})");
@@ -229,6 +237,7 @@ int main() {
       ss2 << f2.rdbuf();
       CHECK(cdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
+    ensureLangAvatar(cdb);
 
     // 注册五个用户：root(超管引导) / admin_a / admin_b / reviewer / outsider
     auto reg = [&](const char* u) -> std::int64_t {
@@ -532,6 +541,7 @@ int main() {
       ss3 << f3.rdbuf();
       CHECK(rdb.migrate(ss3.str(), 3) == SQLITE_OK);
     }
+    ensureLangAvatar(rdb);
 
     // 受限正则匹配器（wasm 无 std::regex）
     CHECK(sacc::match_pattern("^1\\d{10}$", "13800138000"));
@@ -871,6 +881,7 @@ int main() {
       CHECK(edb.migrate(ss4.str(), 4) == SQLITE_OK);
       CHECK(edb.userVersion() == 4);
     }
+    ensureLangAvatar(edb);
 
     // 用户与权限：root 超管 / admin_b 活动管理员(g2) / 报名者 e1 e2 / outsider
     auto ereg = [&](const char* u) -> std::int64_t {
@@ -1088,6 +1099,7 @@ int main() {
       ss2 << f2.rdbuf();
       CHECK(mdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
+    ensureLangAvatar(mdb);
 
     auto mreg = [&](const char* u) -> std::int64_t {
       json rr = invoke(mdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
@@ -1133,18 +1145,23 @@ int main() {
     rr = invoke(mdb, R"({"op":"user_common_info.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
     CHECK(rr["code"] == 0 && rr["data"]["items"].empty());
 
-    // ---- user_notify_pref：set upsert / list / delete 恢复默认 ----
+    // ---- user_notify_pref：set upsert / list / delete 恢复默认（M8：channel bitmask 1~3）----
     CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
-                      R"(,"notify_type":1,"channel":1}})")["code"] == 0);
-    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
-                      R"(,"notify_type":1,"channel":0}})")["code"] == 0);
+                      R"(,"notify_type":1,"channel":1}})")["code"] == 0);  // 站内信
     rr = invoke(mdb, R"({"op":"user_notify_pref.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
     CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 1 &&
-          rr["data"]["items"][0]["channel"] == 0);
+          rr["data"]["items"][0]["channel"] == 1);
     CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
-                      R"(,"notify_type":9,"channel":0}})")["code"] == 422);
+                      R"(,"notify_type":1,"channel":2}})")["code"] == 0);  // 邮箱
+    rr = invoke(mdb, R"({"op":"user_notify_pref.list","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["items"][0]["channel"] == 2);      // 覆盖更新
+    // 非法 channel（旧值 0 / 越界 4）→ 422；非法 notify_type → 422
     CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
-                      R"(,"notify_type":1,"channel":2}})")["code"] == 422);
+                      R"(,"notify_type":1,"channel":0}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":1,"channel":4}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"notify_type":9,"channel":1}})")["code"] == 422);
     CHECK(invoke(mdb, R"({"op":"user_notify_pref.delete","args":{"uid":)" + std::to_string(m_user) +
                       R"(,"notify_type":1}})")["code"] == 0);
     CHECK(invoke(mdb, R"({"op":"user_notify_pref.delete","args":{"uid":)" + std::to_string(m_user) +
@@ -1244,6 +1261,41 @@ int main() {
     rr = invoke(mdb, R"({"op":"user_pref.list","args":{"uid":)" + std::to_string(m_root) + R"(}})");
     CHECK(rr["code"] == 0 && rr["data"]["items"].empty());
 
+    // ---- M9：语言偏好入用户数据（0008 数据迁移：user_pref.locale → user.lang）----
+    // 列已在块首补齐；此处执行与宿主一致的 locale 迁移 SQL（宿主按序执行 0001~0008）
+    CHECK(mdb.exec(
+              "UPDATE \"user\" SET lang = (SELECT pref_value FROM user_pref "
+              "WHERE user_pref.uid = \"user\".uid AND user_pref.pref_key = 'locale' "
+              "AND pref_value IN ('zh', 'en')) "
+              "WHERE EXISTS (SELECT 1 FROM user_pref WHERE user_pref.uid = \"user\".uid "
+              "AND user_pref.pref_key = 'locale' AND pref_value IN ('zh', 'en'));") == SQLITE_OK);
+    // 迁移把 user_pref.locale=en（m_user 此前 set 过）迁入 user.lang；未设 locale 的默认 zh
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["lang"] == "en" && rr["data"]["avatar"] == "");
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_root) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["lang"] == "zh");
+    // user.update：lang 只允许 zh/en（fr → 422）
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"lang":"fr"}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"lang":"zh"}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["lang"] == "zh");
+    // avatar：非 data URL → 422；合法 data URL 写入并回读；清空恢复
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"avatar":"not-a-url"}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"avatar":"data:image/png;base64,aGVsbG8="}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["avatar"] == "data:image/png;base64,aGVsbG8=");
+    // avatar 超限（>400000 字符）→ 422
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"avatar":"data:image/png;base64,)" + std::string(400001, 'a') + R"("}})")["code"] == 422);
+    CHECK(invoke(mdb, R"({"op":"user.update","args":{"uid":)" + std::to_string(m_user) +
+                      R"(,"avatar":""}})")["code"] == 0);
+    rr = invoke(mdb, R"({"op":"auth.me","args":{"uid":)" + std::to_string(m_user) + R"(}})");
+    CHECK(rr["code"] == 0 && rr["data"]["avatar"] == "");
+
     mdb.close();
     std::remove(m5_path.c_str());
   }
@@ -1266,6 +1318,7 @@ int main() {
       ss2 << f2.rdbuf();
       CHECK(sdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
+    ensureLangAvatar(sdb);
 
     auto reg7 = [&](const char* u) -> std::int64_t {
       json rr = invoke(sdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
@@ -1357,6 +1410,38 @@ int main() {
                       R"(,"group_id":)" + std::to_string(g8) + R"(}})");
     CHECK(r["code"] == 0 && r["data"]["total"] == 1 &&
           r["data"]["items"][0]["activity_id"] == a8);
+
+    // M8：通知渠道 bitmask（1=站内信 / 2=邮箱 / 3=两者）
+    // 迁移 0007：旧值映射 0→1（站内）/ 1→2（邮件）
+    CHECK(sdb.execParams("INSERT INTO user_notify_pref (uid, notify_type, channel, updated_at) "
+                         "VALUES (?, 2, 0, 0), (?, 3, 1, 0);",
+                         nlohmann::json::array({target7, target7})) == SQLITE_OK);
+    {
+      std::ifstream f7(std::string(SACC_MIGRATIONS_DIR) + "/0007_notify_channel_bitmask.sql");
+      std::stringstream ss7;
+      ss7 << f7.rdbuf();
+      CHECK(sdb.migrate(ss7.str(), 7) == SQLITE_OK);
+    }
+    r = invoke(sdb, R"({"op":"db.query","args":{"sql":"SELECT notify_type, channel FROM user_notify_pref WHERE uid = )" +
+                      std::to_string(target7) + R"( ORDER BY notify_type;"}})");
+    CHECK(r["code"] == 0 && r["data"]["rows"].size() == 2);
+    CHECK(r["data"]["rows"][0]["notify_type"] == 2 && r["data"]["rows"][0]["channel"] == 1);
+    CHECK(r["data"]["rows"][1]["notify_type"] == 3 && r["data"]["rows"][1]["channel"] == 2);
+
+    // user_notify_pref.set 校验：非法 channel → 422；1/2/3 → 成功（覆盖更新）
+    CHECK(invoke(sdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(target7) +
+                        R"(,"notify_type":0,"channel":0}})")["code"] == 422);
+    CHECK(invoke(sdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(target7) +
+                        R"(,"notify_type":0,"channel":4}})")["code"] == 422);
+    CHECK(invoke(sdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(target7) +
+                        R"(,"notify_type":0,"channel":3}})")["code"] == 0);
+    CHECK(invoke(sdb, R"({"op":"user_notify_pref.set","args":{"uid":)" + std::to_string(target7) +
+                        R"(,"notify_type":0,"channel":1}})")["code"] == 0);
+    r = invoke(sdb, R"({"op":"user_notify_pref.list","args":{"uid":)" + std::to_string(target7) + R"(}})");
+    CHECK(r["code"] == 0 && r["data"]["items"].size() == 3);
+    CHECK(r["data"]["items"][0]["notify_type"] == 0 && r["data"]["items"][0]["channel"] == 1);
+    CHECK(r["data"]["items"][1]["notify_type"] == 2 && r["data"]["items"][1]["channel"] == 1);
+    CHECK(r["data"]["items"][2]["notify_type"] == 3 && r["data"]["items"][2]["channel"] == 2);
 
     sdb.close();
     std::remove(m7_path.c_str());

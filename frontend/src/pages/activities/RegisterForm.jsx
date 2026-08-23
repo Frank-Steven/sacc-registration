@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { App, Button, Card, Form, Space, Spin, Steps, Typography } from 'antd';
+import { App, Button, Card, Form, Grid, Space, Spin, Steps, Typography } from 'antd';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -31,6 +31,9 @@ export default function RegisterForm() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
   const userName = useAuthStore((s) => s.user?.name);
+  const screens = Grid.useBreakpoint();
+  // md 以下为移动端：底部固定「上一步 / 下一步 / 提交」操作条（responsive-design.md 专项 1）
+  const isMobile = screens.md === false;
 
   const [rid, setRid] = useState(null);
   const [current, setCurrent] = useState(0);
@@ -258,7 +261,10 @@ export default function RegisterForm() {
   if (!ready || !rid) {
     return (
       <div style={{ textAlign: 'center', padding: 64 }}>
-        <Spin size="large" tip={t('form.creating')} />
+        <Spin size="large" />
+        <div style={{ marginTop: 12 }}>
+          <Text type="secondary">{t('form.creating')}</Text>
+        </div>
       </div>
     );
   }
@@ -277,53 +283,98 @@ export default function RegisterForm() {
     );
   }
 
+  // 分步操作按钮（桌面行内 / 移动端底部固定条共用）
+  const stepButtons = (
+    <>
+      {current > 0 && <Button onClick={() => setCurrent(current - 1)}>{t('form.prev')}</Button>}
+      {current < forms.length - 1 && (
+        <Button type="primary" onClick={handleNext}>{t('form.next')}</Button>
+      )}
+      {current === forms.length - 1 && (
+        <Button type="primary" loading={submitting} onClick={handleSubmit}>{t('common.submit')}</Button>
+      )}
+    </>
+  );
+
   return (
-    <Card>
-      <div style={{ marginBottom: 16 }}>
-        <Link to={`/activities/${id}`}>← {t('form.back_detail')}</Link>
-      </div>
-      <Title level={4} style={{ marginTop: 0 }}>{activity.name}</Title>
-      <Steps
-        current={current}
-        items={forms.map((f, i) => ({
-          title: `${t('form.step', { n: i + 1 })} ${f.name}`,
-          description: f.is_required ? t('common.required') : t('common.optional'),
-        }))}
-        style={{ marginBottom: 32 }}
-      />
-
-      {forms.map((f, i) => (
-        <div key={f.form_id} style={{ display: current === i ? 'block' : 'none' }}>
-          <StepForm
-            index={i}
-            fields={stepsFields[i]}
-            initialValues={initialValues}
-            onChange={handleChange}
-            onReady={handleReady}
-          />
+    <div style={{ paddingBottom: isMobile ? 'calc(72px + env(safe-area-inset-bottom))' : 0 }}>
+      <Card>
+        <div style={{ marginBottom: 16 }}>
+          <Link to={`/activities/${id}`}>← {t('form.back_detail')}</Link>
         </div>
-      ))}
+        <Title level={4} style={{ marginTop: 0 }}>{activity.name}</Title>
+        <Steps
+          current={current}
+          items={forms.map((f, i) => ({
+            title: `${t('form.step', { n: i + 1 })} ${f.name}`,
+            description: f.is_required ? t('common.required') : t('common.optional'),
+          }))}
+          style={{ marginBottom: 32 }}
+        />
 
-      <div style={{ marginTop: 24, textAlign: 'right' }}>
-        <Space>
-          {current > 0 && <Button onClick={() => setCurrent(current - 1)}>{t('form.prev')}</Button>}
+        {forms.map((f, i) => (
+          <div key={f.form_id} style={{ display: current === i ? 'block' : 'none' }}>
+            <StepForm
+              index={i}
+              fields={stepsFields[i]}
+              initialValues={initialValues}
+              onChange={handleChange}
+              onReady={handleReady}
+            />
+          </div>
+        ))}
+
+        {!isMobile && (
+          <div style={{ marginTop: 24, textAlign: 'right' }}>
+            <Space>{stepButtons}</Space>
+          </div>
+        )}
+
+        <ReceiptModal
+          open={receiptOpen}
+          onClose={() => {
+            setReceiptOpen(false);
+            navigate('/my-registrations', { replace: true });
+          }}
+          registration={receipt}
+        />
+      </Card>
+
+      {/* 移动端：底部固定操作条（防误触 + 安全区） */}
+      {isMobile && (
+        <div
+          className="mob-safe-bottom"
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            zIndex: 1000,
+            display: 'flex',
+            gap: 12,
+            padding: '10px 16px',
+            background: 'var(--app-bg)',
+            borderTop: '1px solid rgba(128,128,128,0.2)',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          {current > 0 && (
+            <Button block onClick={() => setCurrent(current - 1)} style={{ minHeight: 44 }}>
+              {t('form.prev')}
+            </Button>
+          )}
           {current < forms.length - 1 && (
-            <Button type="primary" onClick={handleNext}>{t('form.next')}</Button>
+            <Button block type="primary" onClick={handleNext} style={{ minHeight: 44 }}>
+              {t('form.next')}
+            </Button>
           )}
           {current === forms.length - 1 && (
-            <Button type="primary" loading={submitting} onClick={handleSubmit}>{t('common.submit')}</Button>
+            <Button block type="primary" loading={submitting} onClick={handleSubmit} style={{ minHeight: 44 }}>
+              {t('common.submit')}
+            </Button>
           )}
-        </Space>
-      </div>
-
-      <ReceiptModal
-        open={receiptOpen}
-        onClose={() => {
-          setReceiptOpen(false);
-          navigate('/my-registrations', { replace: true });
-        }}
-        registration={receipt}
-      />
-    </Card>
+        </div>
+      )}
+    </div>
   );
 }

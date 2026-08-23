@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Button, Card, Empty, Input, Select, Space, Spin, Typography } from 'antd';
+import { Button, Card, Drawer, Empty, Grid, Input, Select, Space, Spin, Typography } from 'antd';
+import { ApartmentOutlined } from '@ant-design/icons';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { activityApi } from '../../api/index.js';
 import ActivityCard from '../../components/ActivityCard.jsx';
@@ -10,12 +11,16 @@ const { Text } = Typography;
 
 const PAGE_SIZE = 50;
 
-// 活动大厅（公开可读）：左侧分组树筛选 + 右侧活动列表（关键词 / 形式筛选 + 加载更多）
+// 活动大厅（公开可读）：分组树筛选 + 活动列表（关键词 / 形式筛选 + 加载更多）
+// 平板（md+）双列：左分组树 + 右列表；手机一列：分组树收纳为抽屉
 export default function Activities() {
   useI18n();
   const [groupId, setGroupId] = useState(null);
   const [keyword, setKeyword] = useState('');
   const [type, setType] = useState(undefined);
+  const screens = Grid.useBreakpoint();
+  const isMobile = screens.md === false;
+  const [treeOpen, setTreeOpen] = useState(false);
 
   const {
     data,
@@ -44,29 +49,37 @@ export default function Activities() {
   const items = (data?.pages || []).flatMap((p) => p?.items || []);
 
   return (
+    <>
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
-      <Card title={t('group.title')} size="small" style={{ width: 240, flexShrink: 0 }}>
-        <GroupTree selected={groupId} onSelect={setGroupId} />
-      </Card>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <Space style={{ marginBottom: 16 }} wrap>
-          <Input.Search
-            allowClear
-            placeholder={t('activities.search_placeholder')}
-            style={{ width: 220 }}
-            onSearch={(v) => setKeyword(v.trim())}
-            onChange={(e) => {
-              if (!e.target.value) setKeyword('');
-            }}
-          />
-          <Select
-            allowClear
-            placeholder={t('activities.type')}
-            style={{ width: 120 }}
-            options={[0, 1, 2].map((v) => ({ value: v, label: t(`activityType.${v}`) }))}
-            onChange={(v) => setType(v)}
-          />
-        </Space>
+        {!isMobile && (
+          <Card title={t('group.title')} size="small" style={{ width: 240, flexShrink: 0 }}>
+            <GroupTree selected={groupId} onSelect={setGroupId} />
+          </Card>
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Space style={{ marginBottom: 16 }} wrap>
+            {isMobile && (
+              <Button icon={<ApartmentOutlined />} onClick={() => setTreeOpen(true)}>
+                {t('group.title')}
+              </Button>
+            )}
+            <Input.Search
+              allowClear
+              placeholder={t('activities.search_placeholder')}
+              style={{ width: isMobile ? 180 : 220 }}
+              onSearch={(v) => setKeyword(v.trim())}
+              onChange={(e) => {
+                if (!e.target.value) setKeyword('');
+              }}
+            />
+            <Select
+              allowClear
+              placeholder={t('activities.type')}
+              style={{ width: isMobile ? 120 : 120 }}
+              options={[0, 1, 2].map((v) => ({ value: v, label: t(`activityType.${v}`) }))}
+              onChange={(v) => setType(v)}
+            />
+          </Space>
 
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 48 }}>
@@ -94,7 +107,25 @@ export default function Activities() {
             <Text type="secondary">{t('activities.no_more')}</Text>
           </div>
         )}
+        </div>
       </div>
-    </div>
+
+      {/* 手机端：分组树收纳抽屉（选节点后关闭） */}
+      <Drawer
+        open={isMobile && treeOpen}
+        onClose={() => setTreeOpen(false)}
+        placement="left"
+        width={Math.min(window.innerWidth * 0.85, 300)}
+        title={t('group.title')}
+      >
+        <GroupTree
+          selected={groupId}
+          onSelect={(g) => {
+            setGroupId(g);
+            setTreeOpen(false);
+          }}
+        />
+      </Drawer>
+    </>
   );
 }

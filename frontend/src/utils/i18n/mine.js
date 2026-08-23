@@ -43,7 +43,10 @@ export const mine = {
   'notify.pref_saved': { zh: '偏好已保存', en: 'Preference saved' },
   'notify.pref_reset': { zh: '已恢复默认', en: 'Restored to default' },
   'notify.pref_empty': { zh: '暂无通知偏好', en: 'No notification preferences' },
-  'notify.pref_desc': { zh: '选择接收渠道，修改后立即生效', en: 'Choose channels; changes apply immediately' },
+  'notify.pref_desc': { zh: '可同时选择站内信与邮箱，修改后立即生效', en: 'Choose in-app and/or email; changes apply immediately' },
+  'notify.channel_inapp': { zh: '站内信', en: 'In-app' },
+  'notify.channel_email': { zh: '邮箱', en: 'Email' },
+  'notify.channel_email_disabled': { zh: '在「基础资料」中填写邮箱后，可接收邮件通知', en: 'Add an email in Basic info to receive email notifications' },
   'notify.pref_ph': { zh: '默认（站内信）', en: 'Default (in-app)' },
   'notify.pref_reset_confirm': { zh: '确认将「{type}」通知恢复为默认渠道？', en: 'Reset "{type}" notifications to default channel?' },
 
@@ -62,6 +65,13 @@ export const mine = {
   'profile.college_ph': { zh: '请输入学院', en: 'Enter your college' },
   'profile.phone_ph': { zh: '请输入手机号', en: 'Enter your phone number' },
   'profile.email_ph': { zh: '请输入邮箱', en: 'Enter your email' },
+  // M9 头像
+  'profile.avatar_upload': { zh: '上传头像', en: 'Upload avatar' },
+  'profile.avatar_remove': { zh: '移除头像', en: 'Remove avatar' },
+  'profile.avatar_saved': { zh: '头像已更新', en: 'Avatar updated' },
+  'profile.avatar_removed': { zh: '头像已移除', en: 'Avatar removed' },
+  'profile.avatar_type': { zh: '仅支持 PNG / JPG / WebP 图片', en: 'Only PNG / JPG / WebP images' },
+  'profile.avatar_size': { zh: '头像图片需小于 300KB', en: 'Avatar must be under 300KB' },
 
   // 常用信息
   'common_info.add': { zh: '新增常用信息', en: 'Add common info' },

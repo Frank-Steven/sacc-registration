@@ -8,7 +8,7 @@ import { t, useI18n } from '../../utils/i18n/index.js';
 const { Title } = Typography;
 
 // 通知中心：Tabs（全部 / 未读）包裹可复用列表组件；顶栏角标轮询在 UserLayout，
-// 本页仅驱动「全部已读」与单条已读的角标更新。
+// 本页仅驱动「全部已读」与单条已读的角标更新。（下拉刷新由 UserLayout 布局级统一提供）
 export default function Notifications() {
   useI18n();
   const { message } = AntApp.useApp();

@@ -17,6 +17,12 @@ const SYS_KEYS = [
   { key: 'site_name', type: 2, group: 'site' },
   { key: 'max_upload_size', type: 1, group: 'upload' },
   { key: 'checkin_secret', type: 2, group: 'checkin', secret: true },
+  // 邮件服务（M8）：官方邮箱发送验证码与通知；smtp_pass 掩码展示、留空不改
+  { key: 'mail_from', type: 2, group: 'mail' },
+  { key: 'smtp_host', type: 2, group: 'mail' },
+  { key: 'smtp_port', type: 1, group: 'mail' },
+  { key: 'smtp_user', type: 2, group: 'mail' },
+  { key: 'smtp_pass', type: 2, group: 'mail', secret: true },
 ];
 
 // 白名单展示名（缺失时回退 key 原文）
@@ -32,7 +38,8 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const [values, setValues] = useState({});
-  const [secretInput, setSecretInput] = useState('');
+  // 掩码密钥输入（M8 多密钥：checkin_secret / smtp_pass），仅修改时提交
+  const [secretInputs, setSecretInputs] = useState({});
   const [hasSecret, setHasSecret] = useState(false);
 
   const queryKey = system ? ['system-config'] : ['activity-config', activityId];
@@ -60,10 +67,11 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
   useEffect(() => {
     if (!isLoading) {
       const init = {};
+      const secrets = {};
       items.forEach((it) => {
         if (it.secret) {
-          setHasSecret(!!it.value);
-          setSecretInput('');
+          if (it.key === 'checkin_secret') setHasSecret(!!it.value);
+          secrets[it.key] = '';
           return;
         }
         if (ENUM_KEYS[it.key]) init[it.key] = Number(it.value);
@@ -72,6 +80,7 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
         else init[it.key] = it.value ?? '';
       });
       setValues(init);
+      setSecretInputs(secrets);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading]);
@@ -81,14 +90,21 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
     try {
       let payload;
       if (system) {
-        // 白名单全量保存：站点/上传直接提交（数字未设时跳过）；密钥仅修改时提交
-        payload = [
-          { key: 'site_name', value: values.site_name ?? '' },
-        ];
-        if (values.max_upload_size !== undefined && values.max_upload_size !== null) {
-          payload.push({ key: 'max_upload_size', value: values.max_upload_size });
+        // 白名单全量保存：非密钥项直接提交（数字未设时跳过）；密钥仅修改时提交
+        payload = items
+          .filter((it) => !it.secret)
+          .filter((it) => {
+            if (it.type === 1) {
+              const v = values[it.key];
+              return v !== undefined && v !== null && v !== '';
+            }
+            return true;
+          })
+          .map((it) => ({ key: it.key, value: values[it.key] ?? '' }));
+        for (const it of items.filter((x) => x.secret)) {
+          const v = (secretInputs[it.key] || '').trim();
+          if (v) payload.push({ key: it.key, value: v });
         }
-        if (secretInput.trim()) payload.push({ key: 'checkin_secret', value: secretInput.trim() });
       } else {
         payload = items
           .map((it) => ({ key: it.key, value: values[it.key] ?? '' }))
@@ -123,9 +139,9 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
       return (
         <Input.Password
           disabled={readOnly}
-          value={secretInput}
-          onChange={(e) => setSecretInput(e.target.value)}
-          placeholder={hasSecret ? t('admin.sys.config.secret_placeholder_set') : t('admin.sys.config.secret_placeholder_unset')}
+          value={secretInputs[it.key] ?? ''}
+          onChange={(e) => setSecretInputs((p) => ({ ...p, [it.key]: e.target.value }))}
+          placeholder={it.value ? t('admin.sys.config.secret_placeholder_set') : t('admin.sys.config.secret_placeholder_unset')}
         />
       );
     }
@@ -175,7 +191,7 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
 
   // system 模式：按键前缀分组卡片；checkin_secret 缺失时警示
   if (system) {
-    const groups = ['site', 'upload', 'checkin'];
+    const groups = ['site', 'upload', 'checkin', 'mail'];
     return (
       <div>
         {!hasSecret && (
@@ -191,7 +207,12 @@ export default function ConfigEditor({ activityId, readOnly, system }) {
             const groupItems = items.filter((it) => it.group === g);
             return (
               <Col xs={24} lg={8} key={g}>
-                <Card size="small" title={t(`admin.sys.config.group_${g}`)} style={{ marginBottom: 16 }}>
+                <Card
+                  size="small"
+                  title={t(`admin.sys.config.group_${g}`)}
+                  extra={g === 'mail' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('admin.sys.config.mail_hint')}</Text> : undefined}
+                  style={{ marginBottom: 16 }}
+                >
                   <Form layout="vertical">
                     {groupItems.map((it) => (
                       <Form.Item key={it.key} label={keyLabel(it.key, system)} extra={it.secret ? t('admin.sys.config.secret_hint') : undefined}>

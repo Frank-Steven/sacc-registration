@@ -20,6 +20,11 @@ export const common = {
   'common.view': { zh: '查看', en: 'View' },
   'common.view_receipt': { zh: '查看凭证', en: 'View receipt' },
 
+  // M9 移动端下拉刷新
+  'pull.pull': { zh: '下拉刷新', en: 'Pull to refresh' },
+  'pull.release': { zh: '松开刷新', en: 'Release to refresh' },
+  'pull.refreshing': { zh: '刷新中…', en: 'Refreshing…' },
+
   // 报名状态：0 填写中 / 1 待审核 / 2 已通过 / 3 未通过 / 4 已取消 / 5 候补
   'status.0': { zh: '填写中', en: 'Draft' },
   'status.1': { zh: '待审核', en: 'Pending review' },
@@ -46,6 +51,7 @@ export const common = {
   'notifyType.1': { zh: '审核结果', en: 'Review result' },
   'notifyType.2': { zh: '活动提醒', en: 'Reminder' },
   'notifyType.3': { zh: '候补', en: 'Waitlist' },
+  'notifyType.4': { zh: '邮件发送失败', en: 'Email failed' },
   'notifyChannel.0': { zh: '站内信', en: 'In-app' },
   'notifyChannel.1': { zh: '邮件', en: 'Email' },
 

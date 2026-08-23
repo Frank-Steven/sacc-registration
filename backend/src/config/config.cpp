@@ -37,6 +37,12 @@ const std::map<std::string, ConfigKey>& systemKeys() {
       {"site_name", {2, "站点名称"}},
       {"max_upload_size", {1, "上传大小上限（MB）"}},
       {"checkin_secret", {2, "签到动态码密钥（checkin_mode=2 时使用，仅超管可读写）"}},
+      // 邮件服务（M8）：官方邮箱发送验证码与通知；smtp_pass 掩码展示
+      {"mail_from", {2, "官方发件邮箱（用于发送验证码与通知）"}},
+      {"smtp_host", {2, "SMTP 服务器地址"}},
+      {"smtp_port", {1, "SMTP 端口（465 隐式 SSL / 587 STARTTLS）"}},
+      {"smtp_user", {2, "SMTP 登录账号"}},
+      {"smtp_pass", {2, "SMTP 登录密码（掩码展示，留空不修改）"}},
   };
   return m;
 }
