@@ -70,6 +70,16 @@ erDiagram
         string action
         string target
     }
+    ROLE {
+        int role_id PK
+        string name
+        string description
+    }
+    USER_ROLE {
+        int uid PK, FK
+        int role_id PK, FK
+        int group_id FK
+    }
 
     ACTIVITY ||--o{ FORM : "包含"
     FORM ||--o{ FORM_FIELD : "包含字段"
@@ -77,6 +87,8 @@ erDiagram
     GROUP ||--o{ ACTIVITY_GROUP : "关联活动"
     GROUP ||--o{ GROUP : "parent_id 嵌套"
     ACTIVITY ||--o{ ACTIVITY_CONFIG : "扩展配置"
+    ROLE ||--o{ USER_ROLE : "被授权"
+    GROUP ||--o{ USER_ROLE : "范围授权"
 ```
 
 ## 表设计
@@ -165,7 +177,7 @@ erDiagram
 |---|---|---|
 | config_id | INTEGER PK | 配置项 id |
 | activity_id | INTEGER | → `activity` |
-| config_key | TEXT | 配置键（如 `review_mode`、`notify_channel`） |
+| config_key | TEXT | 配置键（如 `checkin_mode`、`notify_channel`） |
 | config_value | TEXT | 配置值 |
 | config_type | INTEGER | 值类型：0 布尔 / 1 数字 / 2 文本 / 3 JSON |
 | remark | TEXT | 说明 |
@@ -182,6 +194,26 @@ erDiagram
 | config_type | INTEGER | 值类型：0 布尔 / 1 数字 / 2 文本 / 3 JSON |
 | description | TEXT | 说明 |
 | updated_at | INTEGER | 最近更新时间 |
+
+**`role`**（角色定义，种子数据）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| role_id | INTEGER PK | 角色 id（1 超级管理员 / 2 活动管理员 / 3 审核员） |
+| name | TEXT | 角色名称（唯一） |
+| description | TEXT | 角色说明 |
+
+种子数据由迁移 `0002_seed_roles.sql` 幂等写入。
+
+**`user_role`**（用户-角色授权，落库）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| uid | INTEGER | → `user`（见 [user-layer.md](user-layer.md)） |
+| role_id | INTEGER | → `role` |
+| group_id | INTEGER | → `group`（NULL = 全范围；非 NULL 表示授权该分组及全部子分组） |
+
+唯一约束 `(uid, role_id)`；权限判定与接口见 [config.md](config.md) 一 / 2.1。
 
 **`audit_log`**（管理操作日志）
 

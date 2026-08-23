@@ -97,11 +97,12 @@
 返回：`{ total, rows }`；每行：
 
 ```json
-{ "activity_id": 1, "name": "…", "status": 1, "start_time": 0, "max_slots": 100,
+{ "activity_id": 1, "name": "…", "status": 1, "start_time": 0, "end_time": 0,
+  "max_slots": 100, "need_review": 0,
   "total": 50, "taken": 49, "pending": 5, "waitlist": 1, "checked_in": 30 }
 ```
 
-- 范围：`can_read_activity` + `group_id`（含子分组，递归）过滤
+- 范围：基础权限 `has_any_admin_role`（角色 1/2/3 可查）；传入 `group_id` **不校验是否在授权范围内**，直接以该分组子树（含子分组，递归）为统计范围
 - 计数用相关子查询（每活动 ≤ 4 次 COUNT，走 `registration(activity_id, status)` 索引）
 
 ## 四、接口契约
@@ -123,7 +124,7 @@
 - 状态枚举、名额语义与 [registration.md](registration.md) 一致
 - 软删：活动软删不可导出（404）；已软删字段不参与列装配（历史值不导出，库内可追溯）
 - CSV 转义：字段含逗号 / 引号 / 换行时按 RFC 4180 转义
-- 导出 limit 超上限 → **钳制到 5000**（`kMaxExportLimit`，行为宽容不报错）；`cursor` 非法（非整数 / 负数）→ 422
+- 导出 limit 超上限 → **钳制到 5000**（`kMaxExportLimit`，行为宽容不报错）；`cursor` **< 0 → 422**，**非整数字串按 0 处理**（首块）
 
 ## 六、性能与索引
 

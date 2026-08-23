@@ -56,7 +56,7 @@ SQLite 编入 wasm 模块，宿主无法直接调用 backup API → **新增 was
 | 项 | 实现 | 状态 |
 |---|---|---|
 | 启动自检 | `PRAGMA integrity_check`（大库用 `quick_check`）+ `user_version` 与迁移目录一致 | ✅ 已实现（host 启动流程 [index.js](../../host/src/index.js)） |
-| 运行健康 | `GET /api/health`、`GET /api/system/status`（wasm 版本 / user_version / 表清单） | ✅ 已有 |
+| 运行健康 | `GET /api/health`、`GET /api/system/status`（wasm 版本 / user_version） | ✅ 已有 |
 | 磁盘容量 | `data/` 目录阈值告警（宿主启动检查 + 定时任务） | ✅ 已实现（[backup.js](../../host/src/task/backup.js) `checkDiskSpace`） |
 | 统一日志 | JSON 结构化日志（[logger.js](../../host/src/logger.js)） | ✅ 已有 |
 

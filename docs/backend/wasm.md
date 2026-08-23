@@ -69,7 +69,7 @@ flowchart LR
 ## 六、安全
 
 - 密码哈希在 wasm 模块内计算，明文不离开模块。**M1 采用 PBKDF2-HMAC-SHA256**（100k 迭代，wasm 内自包含实现）；原设计 scrypt/bcrypt 因模块内自包含实现成本与正确性风险未采用，决策详情见 [auth.md](auth.md)。
-- 会话 token 由宿主生成与校验（可存于 `account` 表或宿主独立存储）。
+- 会话 token 由宿主生成与校验（当前为无状态 JWT（`host/src/auth/jwt.js`），不落库）。
 - wasm 沙箱隔离，宿主与模块间仅走既定 ABI，无任意代码注入面。
 - 登录失败锁定沿用 `account.login_fail_count` 设计。
 

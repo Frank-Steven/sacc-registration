@@ -66,7 +66,7 @@
 ### 3.1 创建草稿 `registration.create`
 
 - 校验：活动 `status==1` 且 `now ∈ [start_time, end_time]`（可报名窗口）、未软删。
-- `(activity_id, uid)` 唯一：已存在 **status=4（已取消）** 记录 → **复用该行重置为草稿**（清空 `receipt_no` / `queue_no` / `review_*` / 字段明细）；存在其他状态记录 → 409「已报名，请勿重复报名」。
+- `(activity_id, uid)` 唯一：已存在 **status=0（草稿）** 记录 → **幂等返回现有草稿** `{ registration_id, status: 0 }`（不返回 409，保留已填内容，供「继续填写」再次进入）；已存在 **status=4（已取消）** 记录 → **复用该行重置为草稿**（清空 `receipt_no` / `queue_no` / `review_*` / 字段明细）；仅存在 **status=1/2/3/5** 记录 → 409「已报名，请勿重复报名」。
 - 新建草稿 `status=0`，不占名额。
 
 ### 3.2 分步保存 `registration.save`
@@ -190,7 +190,7 @@
 
 | op | 参数 | 返回 `data` | 错误 |
 |---|---|---|---|
-| `registration.review` | `registration_id` `approve` `review_remark` | `{ ok: true }` | 403 无审核权限 / 409 状态非待审核 |
+| `registration.review` | `registration_id` `approve` `review_remark` | `{ ok: true, status }`（附审核后新状态 2 已通过 / 3 未通过） | 403 无审核权限 / 409 状态非待审核 |
 | `checkin.do` | `registration_id` 或 `receipt_no` | `{ ok: true, checkin_time }` | 403 / 404 / 409 状态非已通过或已签到 |
 | `checkin.mine` | `registration_id` | `{ ok: true, checkin_time }` | 403 / 409 非线上模式或状态不符或已签到 |
 | `checkin.code` | `activity_id` `code` | `{ ok: true, checkin_time }` | 403 / 409 非动态码模式或状态不符或已签到 / 422 码错误或过期 |
@@ -206,7 +206,7 @@
 | `notification.read_all` | - | `{ ok: true }` | 403 |
 | `subscribe.add` | `activity_id` | `{ ok: true }` | 404 活动不存在 / 409 已订阅 |
 | `subscribe.remove` | `activity_id` | `{ ok: true }` | 404 |
-| `subscribe.mine` | - | `[ activity ]` | 403 |
+| `subscribe.mine` | - | `{ items: [...] }` | 403 |
 
 > 以上报名端 ops 均为本人 / 登录维度鉴权（uid 入参）；`registration.admin_*` / `registration.review` / `checkin.do` 走 M2 分组范围权限判定。
 

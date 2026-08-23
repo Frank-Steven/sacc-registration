@@ -38,7 +38,7 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | 操作域 | 超级管理员 | 活动管理员 | 审核员 |
 |---|---|---|---|
 | 活动 CRUD / 状态流转 | ✅ 全部 | ✅ 授权分组内 | 只读 |
-| 分组树管理 / 活动绑定 | ✅ | ✅ 绑定到授权分组内活动 | ❌ |
+| 分组树管理 / 活动绑定 | ✅ | ✅ 绑定到授权分组内活动；分组树经 `group.public_tree` 查看（`group.tree` 仅超管可查）或由超管配置绑定 | ❌ |
 | 表单 / 字段 | ✅ | ✅ 授权分组内活动 | 只读 |
 | 模板（含套用） | ✅ | ✅ 套用到授权分组内活动 | ❌ |
 | 活动配置 | ✅ | ✅ 授权分组内 | 只读 |
@@ -76,10 +76,10 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | `group.create` | `name` 必填 + `parent_id` `sort_order` | `{ group_id }` | 422 / 403 仅超管 |
 | `group.update` | `group_id` + `name` `parent_id` `sort_order` | `{ ok: true }` | 403 / 404 / 409 移动至自身子树 |
 | `group.delete` | `group_id` | `{ ok: true }` | 403 / 409 有子分组或活动绑定 |
-| `group.tree` | - | 完整树（含软删标记） | 403 |
+| `group.tree` | - | `{ items: [{ group_id, parent_id, name, sort_order, is_deleted, created_at }] }`（扁平列表，前端自行组树） | 403 仅超管 |
 | `activity_group.bind` | `activity_id` `group_id` | `{ ok: true }` | 403 分组不在授权范围 |
 | `activity_group.unbind` | `activity_id` `group_id` | `{ ok: true }` | 403 |
-| `activity_group.list` | `activity_id` | `[ group ]` | 404 |
+| `activity_group.list` | `activity_id` | `{ items: [...] }` | 不校验活动存在性 |
 
 **表单 / 字段**
 
@@ -97,10 +97,10 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 
 | op | 参数 | 返回 `data` | 错误 |
 |---|---|---|---|
-| `form_template.create` | `name` 必填 + `description` `fields_json` | `{ template_id }` | 422 |
-| `form_template.update` | `template_id` + `name` `description` `fields_json` | `{ ok: true }` | 404 |
-| `form_template.delete` | `template_id` | `{ ok: true }` | 404 |
-| `form_template.list` | - | `[ template ]` | - |
+| `form_template.create` | `name` 必填 + `description` `fields_json` | `{ template_id }` | 422 / 403 非活动管理员 |
+| `form_template.update` | `template_id` + `name` `description` `fields_json` | `{ ok: true }` | 403 非活动管理员 / 404 |
+| `form_template.delete` | `template_id` | `{ ok: true }` | 403 非活动管理员 / 404 |
+| `form_template.list` | - | `{ items: [...] }`（含 `template_id` / `name` / `description` / `fields_json` / `created_at`） | - |
 | `form_template.save_from_activity` | `activity_id` `name` | `{ template_id }` | 403 / 404 |
 | `form_template.apply` | `template_id` `activity_id` | `{ form_id }`（复制字段生成 `form` + `form_field`） | 403 活动不在授权范围 / 404 |
 
@@ -109,20 +109,20 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | op | 参数 | 返回 `data` | 错误 |
 |---|---|---|---|
 | `activity_config.set` | `activity_id` `key` `value` | `{ ok: true }` | 422 key 未登记或值类型不符 / 403 |
-| `activity_config.get` | `activity_id` `key` | `{ value, type, remark }` | 404 |
-| `activity_config.list` | `activity_id` | `[ { key, value, type, remark } ]` | - |
+| `activity_config.get` | `activity_id` `key` | `{ key, value, type, remark }` | 403 无读权限 / 404 未设置 / 422 key 未登记 |
+| `activity_config.list` | `activity_id` | `{ items: [...] }` | 403 无读权限 |
 | `system_config.set` | `key` `value` | `{ ok: true }` | 422 / 403 仅超管 |
-| `system_config.get` | `key` | `{ value, type, description }` | 404 |
-| `system_config.list` | - | `[ ... ]` | - |
+| `system_config.get` | `key` | `{ key, value, type, description }` | 403 仅超管 / 404 |
+| `system_config.list` | - | `{ items: [...] }` | 403 仅超管 |
 
 **角色 / 授权 / 审计**
 
 | op | 参数 | 返回 `data` | 错误 |
 |---|---|---|---|
-| `role.list` | - | `[ role ]` | - |
-| `user_role.grant` | `uid` `role_id` + 可选 `group_id` | `{ ok: true }` | 403 仅超管 / 422 |
+| `role.list`（角色 1/2/3 均可查） | - | `{ items: [...] }`（含 `role_id` / `name` / `description`） | 403 无权限查看角色 |
+| `user_role.grant` | `target_uid` `role_id` + 可选 `group_id` | `{ ok: true }` | 403 仅超管 / 422 |
 | `user_role.revoke` | `uid` `role_id` | `{ ok: true }` | 403 / 404 |
-| `user_role.list` | `uid` | `[ { role_id, name, group_id } ]` | - |
+| `user_role.list`（任何登录用户可查自身角色；跨用户查询仅超管） | `target_uid` | `{ items: [{ role_id, role_name, group_id, group_name }] }` | 403 跨用户查询仅超管 |
 | `audit_log.list` | `page` `page_size` `operator_uid` `action` `start_time` `end_time` | `{ items[], total }` | 403 |
 
 ### 2.2 host HTTP 路由
@@ -145,6 +145,7 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | GET / PUT | `/api/admin/system/config` | `system_config.list` / `system_config.set`（批量） |
 | GET / POST / PUT / DELETE | `/api/admin/templates` | `form_template.list` / `create` / `update` / `delete` |
 | POST | `/api/admin/templates/:id/apply` | `form_template.apply` |
+| POST | `/api/admin/activities/:id/templates` | `form_template.save_from_activity`（M6 补充路由） |
 | GET | `/api/admin/roles` | `role.list` |
 | GET | `/api/admin/users/:uid/roles` | `user_role.list`（按目标用户查询） |
 | POST | `/api/admin/roles/:roleId/users` | `user_role.grant`（`role_id` 取路径，body 传 `target_uid`/`group_id`） |
@@ -157,6 +158,7 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 |---|---|---|
 | GET | `/api/activities` | 可报名活动列表（`status==1` 且未过期） |
 | GET | `/api/activities/:id` | 活动详情 + 分组 + 表单字段定义（供报名渲染） |
+| GET | `/api/groups/tree` | `group.public_tree`（M5 B3 新增：报名端公开分组树，供活动大厅筛选） |
 
 > **宿主路由扩展**：现有 [server.js](../index.md) 路由为正则匹配，M2 起支持字符串路径 + `:param` 捕获注入 `ctx.params`（已实现）。
 

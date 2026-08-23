@@ -72,7 +72,7 @@ flowchart LR
 
 ## 六、安全与边界
 
-- 密码最小 8 位；用户名 3~32 位 `[A-Za-z0-9_]`
+- 密码长度须为 8~128 位；用户名 3~32 位 `[A-Za-z0-9_]`
 - 注册 `account` + `user` 同一事务（`BEGIN IMMEDIATE`），用户名冲突唯一约束兜底
 - `auth.me` 仅返回公开资料，不含 `password_hash` / `salt` / `reset_token`
 - 所有字符串参数 UTF-8；时间戳 Unix 秒（INTEGER）

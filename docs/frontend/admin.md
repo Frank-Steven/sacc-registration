@@ -9,7 +9,7 @@
 | 模块 | 页面 | 说明 |
 |---|---|---|
 | 概览 | `/admin` | 跨活动数据看板（`activity.stats`） |
-| 活动管理 | `/admin/activities`、`/admin/activities/:id` | 列表 / 编辑（基本信息 + 分组绑定 + 活动配置 + 状态流转）/ 复制 / 模板 |
+| 活动管理 | `/admin/activities`、`/admin/activities/new`、`/admin/activities/:id` | 列表 / 新建 / 编辑（基本信息 + 分组绑定 + 活动配置 + 状态流转）+ 模板（保存为模板 + 套用） |
 | 表单设计 | 活动编辑内嵌 FormDesigner | 表单组 + 字段编辑 + 校验 + 模板套用 |
 | 报名运营 | `/admin/activities/:id/registrations`、`/review`、`/checkin`、`/stats` | 名单 / 审核队列 / 签到 / 单活动看板 |
 | 模板 | `/admin/templates` | 模板 CRUD（套用在活动编辑内） |
@@ -31,6 +31,7 @@
 |---|---|---|
 | `/admin` | 概览看板 Dashboard | 1/2/3 |
 | `/admin/activities` | 活动列表 | 1/2（3 只读进入活动编辑） |
+| `/admin/activities/new` | 新建活动（静态路由，复用 ActivityEdit） | 1/2 |
 | `/admin/activities/:id` | 活动编辑（基本信息 + 分组 + 配置 + 状态流转 + 表单设计器） | 1/2 可写，3 只读 |
 | `/admin/activities/:id/registrations` | 名单 | 1/2/3 |
 | `/admin/activities/:id/review` | 审核队列 | 1/2/3（3 为审核员） |
@@ -43,6 +44,7 @@
 
 - 已登录 + 至少一个管理角色（role 1/2/3）才放行；否则 `/403`
 - 当前用户角色：`GET /api/admin/users/:uid/roles`（op `user_role.list`，路由已存在，`target_uid` 取路径参数），进入 AdminLayout 时 `useQuery(['my-roles', uid])` 拉取，缓存到会话
+- **roles 加载期先放行渲染**：`useQuery` 未就绪（`undefined`）时不拦截；查询就绪后若不含任何管理角色（含空列表）→ 跳 `/403`
 - `auth.me` 返回不含角色，须以上述接口为准（决策 D4）
 
 ### 2.3 角色门控矩阵（前端按钮显隐，后端 403 兜底）
@@ -117,15 +119,16 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 
 ## 六、表单设计器（FormDesigner，活动编辑内嵌）
 
-参照 [component-design.md](component-design.md) 三：左侧字段类型库 → 中间表单实时预览 → 右侧字段配置面板。
+**实际形态**：表单组 `Collapse` 列表 + 字段 Modal 编辑 + 上移 / 下移按钮排序，**无拖拽、无实时预览**（早期「左类型库 / 中预览 / 右配置」三栏设计未落地，以 [component-design.md](component-design.md) 三为准）。
 
 - **表单组**：`form.create/update/delete`（名称 / 排序 / 必填）；删除有字段的表单 → 409，先删字段
-- **字段**：`form_field.create/update/delete`，配置面板字段：
+- **字段**：`form_field.create/update/delete`，字段 Modal 内可编辑项：
   - `field_key`（**冻结**，正则 `[a-z][a-z0-9_]{1,31}`，建议 `student_`/`contact_` 前缀）、`field_type`（**冻结**）
-  - `field_label`、`is_required`、`sort_order`（拖拽排序，提交顺序数组）
-  - `placeholder`、`default_value`、`is_visible`、`is_editable`、`remark`
+  - `field_label`、`is_required`、`sort_order`（**上移 / 下移按钮**交换相邻 `sort_order`，无拖拽）
+  - `placeholder`、`default_value`
   - `options`（单选/多选，活动进行中仅允许追加，删除旧选项 409）
   - `validation` JSON（`min/max/regex/min_length/max_length/min_items/max_items`，按类型生效）
+  - `is_visible` / `is_editable` / `remark` **不可配置**：仅只读展示（`is_visible=false` 的字段在列表中标注 hidden，报名端联动显隐同理）
 - **field_type 映射**（与报名端 FormBuilder 一致，0~5）：
 
 | type | 控件（antd） |
@@ -135,9 +138,9 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 | 2 单选 | Radio.Group（options） |
 | 3 多选 | Checkbox.Group（options） |
 | 4 日期 | DatePicker |
-| 5 文件 | Upload（仅配置；报名端上传后存路径/URL） |
+| 5 文件 | 管理端可配置；报名端未开放（disabled Input + 提示） |
 
-- 实时预览区用现有报名端 FormBuilder 渲染只读态，保证「配置所见即所填」
+- 无实时预览区：字段保存后直接在 `Collapse` 列表回显（早期「配置所见即所填」设计未落地）
 - 新增字段属**只追加**：历史 `registration_data` 引用 `field_id` 始终有效；软删字段不再出现在导出列
 - 模板套用按钮（从 TemplatePicker 选择，`form_template.apply`）
 
@@ -146,7 +149,7 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 ### 7.1 名单 `/admin/activities/:id/registrations`
 
 - 数据：`GET /api/admin/activities/:id/registrations`；筛选：状态（0~5 + 全部）、关键字（姓名/学号/手机/凭证号，后端 LIKE 转义）；分页
-- **RegistrationTable** 固定列：状态 Tag、`receipt_no`、`queue_no`、姓名、学号、手机、提交时间（`created_at`）、审核人/时间/备注、签到时间、操作
+- **RegistrationTable** 固定列：状态 Tag、`receipt_no`、`queue_no`、姓名、学号、手机、提交时间（`created_at`）、审核时间（`review_time`）、操作；无审核人列，审核备注（`review_remark`）/ 签到时间仅在详情 Drawer 展示
 - 行操作：
   - 详情 Drawer：`registration.admin_detail`（`registration` 全列 + `user` + `items[]` 字段值列表，label/value 渲染）
   - 快捷入口：待审 → 审核；已通过 → 签到（跳对应页）
@@ -179,9 +182,9 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 
 ### 7.4 单活动看板 `/admin/activities/:id/stats` + 概览 `/admin`
 
-- 单活动：`GET /api/admin/activities/:id/stats` → Statistic 卡片（名额/已占/待审/候补/已签到）+ `status_dist` 状态分布（antd Progress/Table）+ `field_dist` 字段分布（单选/多选计数表）+ `trend` 折线（`days` 可切换 7/30/90，**UTC 日期转本地展示**）
+- 单活动：`GET /api/admin/activities/:id/stats` → Statistic 卡片（名额/已占/待审/候补/已签）+ `status_dist` 状态分布（antd Table）+ `field_dist` 字段分布（单选/多选计数表）+ `trend` 折线（`days` 可切换 7/30/90，**UTC 日期转本地展示**）
 - 概览：`GET /api/admin/activities/stats`（跨活动行表：名称/状态/名额/已占/待审/候补/已签）+ 关键字/日期筛选
-- 图表：**不引入图表库**（决策 D1），Statistic + Progress + Table + 轻量 SVG 折线；趋势数据量小，自绘足够
+- 图表：**不引入图表库**（决策 D1），Statistic + Table + 轻量 SVG 折线；趋势数据量小，自绘足够
 
 ## 八、后端现状核对与缺口
 
@@ -199,13 +202,13 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 
 | 组件 | 说明 |
 |---|---|
-| `StatusTag` | 活动状态 / 报名状态 0~5 → 颜色 + 文案（i18n），复用报名端映射 |
-| `FormDesigner` | 字段类型库 + 实时预览 + 配置面板（第六节） |
-| `RegistrationTable` | 动态列名单表（固定列 + 导出列预览）+ 状态筛选 + 分页 |
-| `ReviewDrawer` | 审核详情 + 通过/驳回 + 理由输入 |
-| `CheckinScanner` | 凭证输入/扫码 + 结果反馈 |
-| `CheckinCodeBoard` | 动态码大屏（轮询 + 倒计时） |
-| `DataBoard` | Statistic + Progress + Table + SVG 折线 |
+| `ActivityStatusTag` / `RegistrationStatusTag` | 活动状态（0~3）/ 报名状态（0~5）→ 颜色 + 文案（i18n），两个独立组件，复用报名端映射 |
+| `FormDesigner` | 表单组 Collapse 列表 + 字段 Modal 编辑 + 上移/下移（第六节） |
+| `RegistrationTable` | ⚠️ 内联实现于 [Registrations.jsx](../../frontend/src/pages/admin/Registrations.jsx)：固定列名单表 + 状态/关键字筛选 + 分页 + 详情 Drawer |
+| `ReviewDrawer` | ⚠️ 内联实现于 [Review.jsx](../../frontend/src/pages/admin/Review.jsx)：审核详情 + 通过/驳回 + 理由输入 |
+| `CheckinScanner` | ⚠️ 内联实现于 [Checkin.jsx](../../frontend/src/pages/admin/Checkin.jsx)：凭证输入 + 结果反馈 |
+| `CheckinCodeBoard` | ⚠️ 内联实现于 [Checkin.jsx](../../frontend/src/pages/admin/Checkin.jsx)：动态码大屏（60s 轮询 + 本地逐秒倒计时） |
+| `DataBoard` | ⚠️ 内联实现于 [Stats.jsx](../../frontend/src/pages/admin/Stats.jsx)：Statistic + Table + 自绘 SVG 折线 |
 | `ConfigEditor` | 活动配置键值类型化编辑 |
 | `TemplatePicker` | 模板选择 Modal（套用） |
 | `GroupTreeSelect` | 分组树多选（绑定活动） |
@@ -219,7 +222,7 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 5. **审核队列**：ReviewDrawer + 列表联动刷新
 6. **签到**：CheckinScanner / CheckinCodeBoard / 已签名单；「我的报名」补动态码输码入口
 7. **看板**：单活动 stats/trend + 概览 activity.stats
-8. **联调验收**：`yarn test` + 浏览器走查（建活动 → 设计表单 → 报名 → 审核 → 签到 → 看板 → 导出）
+8. **联调验收**：根 `scripts/test.sh`（统一测试入口，5 步：native ctest → wasm 构建 → host typecheck → host 集成测试 → 前端构建）+ 浏览器走查（建活动 → 设计表单 → 报名 → 审核 → 签到 → 看板 → 导出）
 
 ## 十一、验收标准
 
@@ -238,7 +241,7 @@ Query 键约定：`['admin-activities']`、`['admin-activity', id]`、`['roster'
 
 | # | 决策 | 理由 |
 |---|---|---|
-| D1 | 看板不引入图表库（Statistic + Progress + Table + SVG 折线） | 指标少、数据量小；避免 echarts/recharts 体积；后续需要再评估 |
+| D1 | 看板不引入图表库（Statistic + Table + SVG 折线） | 指标少、数据量小；避免 echarts/recharts 体积；后续需要再评估 |
 | D2 | 「复制活动」= 保存为模板 + 新建 + 套用组合 | 后端无 `activity.copy`；模板链路已完备且可复用 |
 | D3 | 不做批量操作 | 后端无批量接口；避免前端循环串行调用放大失败面 |
 | D4 | 当前用户角色用 `user_role.list` 查询并会话缓存 | `auth.me` 不含角色；该路由已存在，无需后端改动 |

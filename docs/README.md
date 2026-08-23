@@ -16,8 +16,13 @@ docs/
 │   ├── index.md              后端文档导航
 │   ├── wasm.md               WebAssembly 技术方案
 │   ├── config-layer.md       配置层（活动 / 分组 / 表单 / 字段 / 配置）
+│   ├── config.md             配置层与权限实现（接口契约 / 权限模型 / 决策记录）
 │   ├── user-layer.md         用户层（账号 / 角色 / 通知 / 偏好）
+│   ├── auth.md               认证与账号（注册 / 登录 / 锁定 / 重置 / 决策记录）
 │   ├── data-layer.md         数据层（报名 / 明细 + 状态机）
+│   ├── registration.md       报名链路实现（状态机 / 名额候补 / 审核 / 签到 / 通知）
+│   ├── export.md             导出统计（名单分块 / CSV / 看板 / 趋势 / 决策记录）
+│   ├── disaster-recovery.md  灾难恢复（备份 / 恢复 / 监控）
 │   ├── principles.md         设计要点
 │   ├── indexes.md            索引设计
 │   └── flows.md              典型流程
@@ -25,6 +30,7 @@ docs/
     ├── index.md              前端文档导航
     ├── portal.md             M5 前端基础与报名端设计
     ├── admin.md              M6 管理端设计（活动管理 / 报名运营）
+    ├── system.md             M7 系统管理端与打磨设计（分组 / 账号 / 角色 / 配置 / 审计 / 数据治理）
     ├── architecture.md       架构 / 技术栈 / 权限 / 路由
     ├── page-design.md        页面设计
     ├── interaction-design.md 功能交互设计

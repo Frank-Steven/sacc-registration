@@ -13,8 +13,8 @@
 | M2 配置层 | 活动 / 分组 / 表单 / 字段 / 模板 / 配置、角色与分组权限 | 管理端配置 API ✅ 已完成（含灾难恢复落地） |
 | M3 报名链路 | 草稿 / 提交 / 防超卖 / 候补递补 / 审核 / 修改取消 / 签到 / 通知 | 报名全流程 API ✅ 已完成 |
 | M4 导出统计 | 名单分块导出、聚合统计 | 导出与看板 API ✅ 已完成 |
-| M5 前端基础 | Vite + React + antd 工程、路由 / 布局、请求与缓存层 | 报名端可浏览 |
-| M6 管理端 | 活动管理（表单设计器）、名单 / 审核 / 签到 / 看板 / 模板 | 管理端可用 |
+| M5 前端基础 | Vite + React + antd 工程、路由 / 布局、请求与缓存层 | 报名端可浏览 ✅ 已完成 |
+| M6 管理端 | 活动管理（表单设计器）、名单 / 审核 / 签到 / 看板 / 模板 | 管理端可用 ✅ 已完成 |
 | M7 系统管理 + 打磨 | 分组 / 账号 / 角色 / 配置中心 / 审计 / 数据治理；响应式与性能优化、测试 | 全功能发布版 |
 
 ## 二、工程结构
@@ -27,18 +27,16 @@ sacc-registration/
 │   ├── wasm/            # C ABI 导出接口（wasm_alloc / 各 wasm_* 函数）
 │   └── test/            # 单元测试（native 目标下直接测）
 ├── host/                # 宿主服务（建议 Node.js，瓶颈时换 Rust）
-│   ├── http/            # HTTP 路由 + 会话鉴权 + WebSocket
+│   ├── http/            # HTTP 路由 + 会话鉴权
 │   ├── wasm-runtime/    # 调用 backend.wasm（写调用串行化）
-│   ├── smtp/            # 邮件发送与重试
-│   └── task/            # 定时任务（订阅提醒、递补）
+│   └── task/            # 定时任务（订阅提醒、递补）；邮件队列在 task/notify.js（sendMail 注入，SMTP 未配置时仅告警）
 ├── frontend/            # React 19 + antd 5（Vite）
 │   ├── src/pages/       # 路由页面（报名端 / 管理端 / 系统管理端）
 │   ├── src/components/  # 复用组件（FormBuilder、FormDesigner 等）
 │   ├── src/stores/      # Zustand store
-│   ├── src/api/         # axios 服务层（按域拆分）
-│   └── src/hooks/       # TanStack Query 封装
+│   └── src/api/         # axios 服务层（按域拆分）
 ├── db/                  # 迁移脚本（PRAGMA user_version 分版本）
-└── scripts/             # 构建 / 部署 / 备份脚本
+└── scripts/             # 构建 / 测试 / 开发脚本
 ```
 
 ## 三、关键实现决策
@@ -88,7 +86,7 @@ sacc-registration/
 ## 五、宿主实现计划（host/）
 
 - HTTP 路由 + 会话鉴权（token 校验）、静态资源托管
-- WebSocket：通知未读 / 审核结果 / 递补事件推送（断线重连 + 轮询兜底）
+- 实时刷新：前端轮询（Query refetchInterval 15s + 定时器）；WebSocket 未实施（降级为轮询兜底）
 - SMTP：邮件发送队列 + 重试；定时任务：活动提醒、递补执行
 - 部署：单实例进程（wasm 模块 + `sacc.db`）；备份（`db.backup` op + 定时任务 + 保留策略）、恢复与监控见 [disaster-recovery.md](backend/disaster-recovery.md)
 
@@ -108,8 +106,10 @@ sacc-registration/
 - 权限：RequireAdmin（`user_role.list` 查自己角色）+ 角色门控按钮 + 后端 403 兜底；消费 M2/M3/M4 现有 API，无新增后端 ops
 
 **M7（系统管理端与打磨）**
-- 分组树管理、账号管理、角色授权（权限预览）、配置中心（ConfigEditor）、审计检索、数据治理
-- 响应式全功能适配（[responsive-design.md](frontend/responsive-design.md)）、数据优化（[data-optimization.md](frontend/data-optimization.md)）、E2E 测试
+- 设计文档：[system.md](frontend/system.md)（路由权限 / 分组管理 / 账号管理 / 角色授权与权限预览 / 配置中心 / 审计检索 / 数据治理 / 响应式 / 数据优化 / E2E / 决策记录）
+- 系统管理端：分组树管理、账号管理、角色授权（权限预览）、配置中心（ConfigEditor system 模式）、审计检索、数据治理（统计 + 备份管理）
+- 后端前置补齐：`user.admin_list`、`account.set_status`、`account.admin_reset`、`db.stats`、宿主备份路由（B1~B5）
+- 打磨：响应式全功能适配（[responsive-design.md](frontend/responsive-design.md)）、数据优化（[data-optimization.md](frontend/data-optimization.md)）、E2E 测试（Playwright）
 
 ## 七、验收标准（对照设计文档）
 

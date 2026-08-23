@@ -16,7 +16,7 @@ M5 是前端第一个落地里程碑，交付 **「报名端可浏览」**：工
 | 报名端页面 | 工作台、活动大厅、活动详情、分步报名表单（FormBuilder）、我的报名 / 凭证、通知中心、资料（基础资料 / 常用信息 / 通知偏好） |
 | 后端前置补齐 | 报名端页面依赖但 M1~M4 未提供的 6 项接口（见 [八](#八后端前置补齐契约先行)，契约先行） |
 
-**范围外（M6 / M7）**：管理端与系统管理端页面（M5 仅落地 AdminLayout 骨架 + 占位页 + 403）；WebSocket 推送（M5 通知角标用轮询兜底）；`@ant-design/charts`（看板 M6 引入）；FormDesigner / RegistrationTable / CheckinScanner / DataBoard 等管理组件。
+**范围外（M6 / M7）**：系统管理端页面（分组 / 账号 / 角色 / 配置 / 审计 / 数据治理，M7 规划）；WebSocket 推送（未实现，通知角标等统一 15s 轮询）；图表库（未引入，看板由 Stats 自绘 SVG 折线）。管理端主体（AdminLayout / FormDesigner / ConfigEditor / TemplatePicker 等）已随 M6 完整落地，M5 时仅为骨架 + 占位页 + 403。
 
 ## 二、工程搭建
 
@@ -31,12 +31,11 @@ frontend/src/
 ├── router.jsx          # createBrowserRouter：路由表 + 懒加载分包 + 守卫
 ├── layouts/            # AuthLayout / UserLayout / AdminLayout
 ├── guards/             # RequireAuth / GuestOnly / Forbidden / NotFound
-├── api/                # client.js（拦截器）+ 按域拆分（auth/activity/group/registration/notification/subscribe/user）
-├── stores/             # auth.js / notification.js / registration.js（Zustand）
-├── hooks/              # TanStack Query 封装（useActivityDetail / useActivityList / useUnreadCount…）
-├── components/         # 复用组件（FormBuilder、ActivityCard、RegistrationStatusTag、ReceiptModal、NotificationCenter、CommonInfoManager、NotifyPrefForm）
+├── api/                # client.js（拦截器）+ 按域拆分（auth/activity/group/registration/notification/subscribe/user + admin.js）
+├── stores/             # auth.js / notification.js / registration.js / preferences.js（Zustand）
+├── components/         # 复用组件（FormBuilder、ActivityCard、RegistrationStatusTag、ReceiptModal、NotificationCenter、CommonInfoManager、NotifyPrefForm、FormDesigner、ConfigEditor、TemplatePicker…）
 ├── pages/              # 报名端页面（auth / Workbench / Activities / MyRegistrations / Notifications / Profile）
-├── constants/          # 状态 / 活动形式 / 字段类型枚举映射、错误提示文案
+├── constants/          # 状态 / 活动形式 / 字段类型枚举映射（错误文案见 api/errors.js）
 └── utils/              # 时间格式化（Unix 秒 → dayjs）、错误码映射
 ```
 
@@ -50,36 +49,36 @@ frontend/src/
 | dayjs | 时间处理 | antd 传递依赖，显式声明 |
 | qrcode.react | 报名凭证二维码 | 新增（我的报名详情） |
 
-不引入：`@ant-design/charts`（M6 数据看板）、WebSocket 库（宿主 WS 未就绪，M5 轮询，决策 2）。
+不引入：`@ant-design/charts`（无图表库，看板 Stats 自绘 SVG 折线）、WebSocket 库（未实现，统一 15s 轮询，决策 2）。
 
 ### 2.3 工程配置
 
 - **Vite 代理**：沿用现有 `/api → http://localhost:3000`（[vite.config.js](../../frontend/vite.config.js)）；构建产物由宿主托管（`FRONTEND_DIST`，SPA 回退 `index.html`）。
-- **分包**：路由懒加载 `React.lazy` + `Suspense`，报名端 / 管理端（占位）/ 第三方大依赖独立 chunk（[data-optimization.md](data-optimization.md) 七）。
+- **分包**：路由懒加载 `React.lazy` + `Suspense`，报名端 / 管理端（M6 完整管理端，懒加载 chunk）/ 第三方大依赖独立 chunk（[data-optimization.md](data-optimization.md) 七）。
 - **React 19 兼容**：antd 版本 < 5.23 时引入 `@ant-design/v5-patch-for-react-19`（决策 1）。
 
 ## 三、路由与布局
 
 ### 3.1 路由表（M5 落地范围）
 
-按 [architecture.md](architecture.md) 四 路由总览，M5 落地如下（管理端仅占位）：
+按 [architecture.md](architecture.md) 四 路由总览，M5 落地如下（管理端仅骨架占位，M6 完整落地）：
 
 | 路径 | 页面 | 布局 | 守卫 |
 |---|---|---|---|
 | /login · /register · /forgot-password | 登录 / 注册 / 忘记密码 | AuthLayout | GuestOnly |
 | /workbench | 我的工作台 | UserLayout | RequireAuth |
-| /activities | 活动大厅 | UserLayout | 公开可读（未登录可浏览） |
-| /activities/:id | 活动详情 | UserLayout | 公开可读（未登录可浏览） |
+| /activities | 活动大厅 | UserLayout | 需登录（RequireAuth 包裹，未登录跳 /login?redirect=…） |
+| /activities/:id | 活动详情 | UserLayout | 需登录（RequireAuth 包裹，未登录跳 /login?redirect=…） |
 | /activities/:id/register | 报名表单（分步） | UserLayout | RequireAuth |
 | /my-registrations | 我的报名 | UserLayout | RequireAuth |
 | /my-registrations/:id | 报名详情 / 凭证 | UserLayout | RequireAuth |
 | /notifications | 通知中心 | UserLayout | RequireAuth |
 | /profile | 资料 / 常用信息 / 通知偏好 | UserLayout | RequireAuth |
-| /admin/* | 管理端占位页 | AdminLayout | RequireAuth + 角色 |
+| /admin/* | 管理端（M6 完整实现，见 [admin.md](admin.md)） | AdminLayout | RequireAuth + 角色（RequireAdmin） |
 
-- `/` 重定向：未登录 → `/activities`；已登录 → `/workbench`
+- `/` 重定向：未登录 → `/login`；已登录 → `/workbench`（无公开页面，全部报名端页面需登录）
 - 未匹配 → 404 页；已登录但角色不足 → 403 页
-- 分包：`pages/auth`、`pages/activities`、`pages/admin`（占位）各自独立 chunk
+- 分包：`pages/auth`、`pages/activities`、`pages/admin`（M6 完整管理端）各自独立 chunk
 
 ### 3.2 三种布局
 
@@ -87,7 +86,7 @@ frontend/src/
 |---|---|---|
 | AuthLayout | 居中卡片 + 品牌区 | ✅ 完整 |
 | UserLayout | 顶栏（Logo / 活动大厅 / 我的报名 / 通知角标 / 头像菜单）+ 内容区 | ✅ 完整（移动端菜单收为抽屉，见 [responsive-design.md](responsive-design.md)） |
-| AdminLayout | 左菜单（按角色渲染）+ 顶栏（面包屑 / 用户）+ 内容区 | ✅ 骨架（菜单按 `user_role` 过滤，页面占位「功能开发中」） |
+| AdminLayout | 左菜单（按角色渲染）+ 顶栏（面包屑 / 用户）+ 内容区 | M5 骨架 → M6 已完整实现（菜单 / 报名运营子菜单 / Breadcrumb / 主题语言切换） |
 
 ## 四、请求与缓存层
 
@@ -111,13 +110,13 @@ frontend/src/
 | 项 | 配置 |
 |---|---|
 | retry | 指数退避（默认 2 次；401 / 403 不重试） |
-| staleTime 分层 | 活动详情 / 分组树 / 表单字段（只读配置）长缓存 + localStorage 持久化；活动列表 60s；名单类动态数据不缓存（[data-optimization.md](data-optimization.md) 三） |
+| staleTime 分层 | 活动详情 / 分组树 / 表单字段 / 我的角色（只读配置）长缓存（staleTime 5min）；活动列表 60s；名单类动态数据不缓存（[data-optimization.md](data-optimization.md) 三） |
 | 失效策略 | 写操作成功后 `invalidateQueries` 对应域（如提交后失效「我的报名」） |
-| 持久化 | `activity` 详情 / `group` 树持久化 localStorage，首屏先渲染再后台校验（决策 3） |
+| 持久化 | 仅客户端状态持久化 localStorage：`sacc.auth`（会话）/ `sacc.registration-draft`（报名草稿）/ `sacc.preferences`（界面偏好）；服务端数据不落 localStorage（决策 3） |
 
 ### 4.4 错误码同步
 
-前端 `api/errors.js` 与宿主已同步（[errors.js](../../frontend/src/api/errors.js)）；M5 将业务提示文案集中到 `constants/errorMessage.js`，页面统一消费，不再散落硬编码。
+前端 `api/errors.js` 与宿主已同步（[errors.js](../../frontend/src/api/errors.js)）；业务提示文案集中在 `api/errors.js` 的 `ErrorMessage` 常量，页面统一消费，不再散落硬编码。
 
 ## 五、状态层（Zustand）
 
@@ -125,9 +124,10 @@ frontend/src/
 
 | store | 状态 | 行为 |
 |---|---|---|
-| useAuthStore | token、user、roles | 登录 / 注册成功写入（localStorage 持久化）；启动时 `GET /api/auth/me` 校验恢复；登出清空并跳登录 |
-| useNotificationStore | unreadCount | 未读轮询更新；单条已读 / 全部已读后递减；驱动顶栏角标 |
-| useRegistrationStore | 草稿表单值、current_step | 分步表单本地草稿与「继续上次填写」恢复；提交成功清空 |
+| useAuthStore | token、user（**roles 不入 store**） | 登录 / 注册成功写入（localStorage 持久化，`sacc.auth`）；启动时 `GET /api/auth/me` 校验恢复；登出清空并跳登录；角色由 `useQuery(['my-roles', uid])` 获取（`user_role.list`，管理端守卫与按钮显隐消费） |
+| useNotificationStore | unreadCount | 未读轮询（15s）更新；单条已读 / 全部已读后递减；驱动顶栏角标 |
+| useRegistrationStore | 草稿表单值、current_step | 分步表单本地草稿（`sacc.registration-draft`）与「继续上次填写」恢复；提交成功清空 |
+| usePreferencesStore | theme、locale | 界面偏好；本地 `sacc.preferences` 持久化，登录后经 `/me/prefs` 跨设备同步 |
 
 ## 六、报名端页面详设
 
@@ -167,6 +167,7 @@ frontend/src/
 
 - 数据：活动详情（forms + fields）+ 预填（`GET /api/auth/me` 基础资料 + `GET /api/me/common-info` 常用信息，按 `field_key` 匹配，冲突以本次填写为准，见 [principles.md](../backend/principles.md)）
 - FormBuilder 分步渲染：步骤条 = 多表单按 `sort_order`；每步一个 `form` 的动态表单（[component-design.md](component-design.md) 三）
+- 文件类型字段（`field_type=5`）**未开放**：报名端渲染为 disabled Input + 提示（「敬请期待」），不可填写
 - 草稿：输入防抖 2s → localStorage + `PUT /api/me/registrations/:rid`（`fields[]` + `current_step`，增量 upsert）；再次进入提示「继续上次填写」（[data-optimization.md](data-optimization.md) 六）
 - 提交：`POST /api/me/registrations/:rid/submit` → 按 `need_review` 展示「待审核」或成功页（ReceiptModal 凭证 + 二维码）；满员 → 提示候补及 `queue_no`
 - 校验：前端按 `validation` JSON 预校验（即时提示），提交由后端兜底（422 指出首个失败字段）
@@ -180,13 +181,13 @@ frontend/src/
 - 操作按状态机控制（[registration.md](../backend/registration.md) 一）：
   - 草稿 → 继续填写；`allow_modify=1` 且待审核 → 编辑（进报名表单）
   - 状态 0/1/2/5 且窗口内 → 取消（二次确认，提示名额释放）
-  - `checkin_mode=1`（线上自助）且状态 2 → 「签到」按钮（`POST /api/me/registrations/:rid/checkin`）
+  - `status=2` 且未签到者显示「签到」与「动态码输码」两按钮：自助签到 `POST /api/me/registrations/:rid/checkin`（checkin_mode=1）；动态码输码 `POST /api/me/checkin/code`（checkin_mode=2 输码入口，6 位码校验）
 
 ### 6.7 通知中心 `/notifications`
 
 - 列表：`GET /api/me/notifications`（未读 / 全部 Tab，分页）
 - 已读：单条 `PUT /api/me/notifications/:nid/read`、全部 `PUT /api/me/notifications/read-all`
-- 顶栏角标：`GET /api/me/notifications/unread-count` 30s 轮询（决策 2；WS 推送待宿主就绪后替换）
+- 顶栏角标：`GET /api/me/notifications/unread-count` 15s 轮询（决策 2；无 WebSocket，统一轮询）
 - 点击跳转：审核结果 / 递补通知 → 对应报名详情
 
 ### 6.8 资料 `/profile`
@@ -212,7 +213,10 @@ frontend/src/
 | NotificationCenter | ✅ | 列表 + 未读角标 + 已读操作 |
 | CommonInfoManager / NotifyPrefForm | ✅ | 资料页 Tab |
 | GroupTree | ⚠️ 只读 | 大厅左侧折叠树（拖拽管理属 M7） |
-| FormDesigner / RegistrationTable / ReviewDrawer / CheckinScanner / DataBoard / ConfigEditor / TemplatePicker | ❌ M6 / M7 | 管理端 |
+| FormDesigner / ConfigEditor / TemplatePicker | ✅ 已落地（M6） | 管理端（见 [admin.md](admin.md) 六 / 九） |
+| RegistrationTable / ReviewDrawer / CheckinScanner / DataBoard | ⚠️ 内联实现 | 无独立组件，内联于对应管理页面（[admin.md](admin.md) 九） |
+
+> 注：该表为 M5 时点快照，M6 后管理端组件已落地；RegistrationTable 等以页面内联实现存在。
 
 ## 八、后端前置补齐（契约先行）
 
@@ -253,7 +257,7 @@ frontend/src/
 | 账号 | 注册 → 自动登录 → 工作台；登录失败提示；忘记密码全流程 |
 | 大厅 / 详情 | 分组树筛选 + 名额进度；报名按钮按窗口 / 名额 / 唯一性置灰并提示原因 |
 | 报名 | 分步表单 + 即时校验 + 联动；草稿防抖保存与恢复；提交 → 待审核或凭证二维码；满员候补提示 |
-| 我的报名 | 状态 Tab + 筛选；凭证 / 取消（二次确认）/ 线上签到（`checkin_mode=1`） |
+| 我的报名 | 状态 Tab + 筛选；凭证 / 取消（二次确认）/ 线上签到（`checkin_mode=1`）与动态码输码（`checkin_mode=2`） |
 | 通知 | 未读角标轮询；已读 / 全部已读；点击跳转关联对象 |
 | 资料 | 基础资料修改、常用信息增删改、通知偏好设置，落库后生效并用于报名预填 |
 | 多端 | 手机端报名主路径可用（全功能适配属 M7，[responsive-design.md](responsive-design.md)） |
@@ -263,11 +267,11 @@ frontend/src/
 | # | 决策 | 理由 |
 |---|---|---|
 | 1 | antd 升级至 ≥5.23（原生 React 19 支持）或引入 `@ant-design/v5-patch-for-react-19` | 当前 `antd ^5.21` 对 React 19 未官方支持，避免运行时兼容问题 |
-| 2 | M5 通知未读用 30s 轮询，WebSocket 推送待宿主就绪后接入 | 宿主 WS 未实现；轮询满足 M5「可浏览」交付，切换点收敛在 api / hook 层 |
+| 2 | 通知未读用 15s 轮询（无 WebSocket；全站 Query `refetchInterval` 15s 统一刷新） | 宿主 WS 未实现；轮询满足交付，切换点收敛在 api / hook 层 |
 | 3 | 服务端状态进 TanStack Query、客户端状态进 Zustand | 与 [data-optimization.md](data-optimization.md) 八一致，缓存 / 去重 / 失效由 Query 统一管理 |
 | 4 | 报名端大厅仅「进行中且未过期」活动（public_list 现状），不提供状态筛选 | 报名端语义即当前可报名活动；历史活动由「我的报名」覆盖 |
 | 5 | 大厅名额进度由后端 `taken` 子查询提供，而非前端拉全量聚合 | 请求下推原则（[data-optimization.md](data-optimization.md) 一）；LIMIT 50 场景成本可控 |
 | 6 | 公开分组树新增 `group.public_tree`，不复用管理端 `group.tree` | 管理树含软删标记与权限语义，公开面需独立只读契约 |
 | 7 | 资料页编辑（user.update / 常用信息 / 通知偏好）纳入 M5，后端契约先行补齐 | [page-design.md](page-design.md) 将「资料」列为报名端页面；表 M1 已建，仅缺 ops |
-| 8 | `@ant-design/charts` 不在 M5 引入 | 看板属 M6；避免主包体积膨胀，页面级懒加载时再引入 |
+| 8 | `@ant-design/charts` 未引入 | 看板最终由 Stats 自绘 SVG 折线（[admin.md](admin.md) 决策 D1），避免主包体积膨胀 |
 | 9 | 常用信息 / 通知偏好均为**单条 upsert**（`(uid, key)` 唯一），删除恢复默认 | 偏好未配置的类型按活动默认渠道发送（[user-layer.md](../backend/user-layer.md)），整表覆盖会误清默认语义 |

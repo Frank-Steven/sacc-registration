@@ -155,3 +155,14 @@ erDiagram
 | updated_at | INTEGER | 最近更新时间 |
 
 唯一约束 `(uid, notify_type)`；未配置的通知类型按活动 `notify_channel` 默认渠道发送。
+
+**`user_pref`**（界面偏好）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| uid | INTEGER | → `user` |
+| pref_key | TEXT | 偏好键 |
+| pref_value | TEXT | 偏好值 |
+| updated_at | INTEGER | 最近更新时间 |
+
+主键 `(uid, pref_key)`；界面偏好存储（0006 迁移新增，对应 `/api/me/prefs`）。

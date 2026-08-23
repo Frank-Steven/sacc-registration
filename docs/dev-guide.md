@@ -24,7 +24,7 @@
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `DB_PATH` | SQLite 文件路径 | `./data/sacc.db` |
-| `JWT_SECRET` | 会话 token 密钥 | 必填 |
+| `JWT_SECRET` | 会话 token 密钥 | 开发未配置时自动生成临时随机密钥（重启失效）并告警，生产必填 |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | 邮件发送 | 可选（未配则仅站内信） |
 | `WASM_PATH` | `backend.wasm` 路径 | `./backend/build/backend.wasm` |
 | `FRONTEND_DIST` | 前端构建产物目录 | `./frontend/dist` |
@@ -93,7 +93,7 @@ cd frontend && yarn dev
 |---|---|---|
 | C++ 单元测试（状态机 / 权限 / 防超卖） | `backend/test/` | `yarn test` 内置 `ctest`，提交前必跑 |
 | 宿主类型检查（JSDoc + checkJs） | `host/`（`host/jsconfig.json`） | `yarn test` 内置 `npx tsc -p host/jsconfig.json --noEmit`；提交前由 `.githooks/pre-commit` 自动拦截 |
-| 宿主集成测试（wasm 调用 + 迁移 + HTTP） | `host/test/` | `yarn test` 内置 `node --test host/test/smoke.test.mjs`，本地 + CI |
+| 宿主集成测试（wasm 调用 + 迁移 + HTTP） | `host/test/` | `yarn test` 内置 `node --test "host/test/*.test.mjs"`，含 pre-commit hook 拦截验证（hook.test.mjs），本地 + CI |
 | 前端构建冒烟（单测待 M7） | `frontend/` | `yarn test` 内置 `yarn workspace sacc-frontend build` |
 | 前端 E2E（Playwright，报名 / 审核 / 签到主路径） | `frontend/e2e/`（规划中，M7） | 待实现 |
 
@@ -114,7 +114,7 @@ flowchart LR
     ART --> DEPLOY[部署：单实例 + 备份任务]
 ```
 
-- 主分支合入触发完整流水线；PR 触发构建 + 单测（快速反馈）；同分支重复运行自动取消（concurrency），`contents: read` 最小权限
+- push 到 main 与 PR 均触发同一完整流水线（`yarn test`：ctest → wasm → typecheck → 集成测试 → 前端 build），暂未区分 PR 快速反馈；同分支重复运行自动取消（concurrency），`contents: read` 最小权限
 - 产物版本号与 git tag 对应（`v0.1.0`）
 - **当前状态**：`.github/workflows/ci.yml` 已实现「构建 backend.wasm → native ctest → 宿主 typecheck → 宿主集成测试（含 pre-commit hook 拦截验证）→ 前端 build」，测试部分由 `yarn test` 统一入口执行（与本地一致），并缓存 yarn 依赖；E2E、发布产物与部署步骤待后续里程碑（M7）补齐
 

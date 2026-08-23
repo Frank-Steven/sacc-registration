@@ -1,6 +1,6 @@
 # 宿主层类型检查（JSDoc + checkJs）维护指南
 
-宿主（`host/`）为 **Node + ESM**，业务逻辑全部在 C++/WASM 内，宿主仅承担 JWT 校验、路由与 wasm 透传，约 950 行薄胶水层。基于此**不引入 TypeScript 编译链**（`-fno-exceptions` 的 wasm 边界是"字符串化 JSON"，TS 编译期类型无法替代运行时防御，迁移收益低于成本），而是启用 **JSDoc + `checkJs`**：零构建成本、VSCode 即时报错、可随时收紧。
+宿主（`host/`）为 **Node + ESM**，业务逻辑全部在 C++/WASM 内，宿主仅承担 JWT 校验、路由与 wasm 透传，约 1130 行薄胶水层。基于此**不引入 TypeScript 编译链**（`-fno-exceptions` 的 wasm 边界是"字符串化 JSON"，TS 编译期类型无法替代运行时防御，迁移收益低于成本），而是启用 **JSDoc + `checkJs`**：零构建成本、VSCode 即时报错、可随时收紧。
 
 ## 1. 配置与命令
 
@@ -96,7 +96,7 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
 
 ### 3.5 说明
 
-- 上述 3.3 / 3.4 均位于 `host/test/smoke.test.mjs`；运行行为与修复前完全一致（已由 `yarn host:test` 验证 11/11 通过）。
+- 上述 3.3 / 3.4 均位于 `host/test/smoke.test.mjs`；运行行为与修复前完全一致（已由 `yarn host:test` 验证 16/16 通过：smoke.test.mjs 13 + hook.test.mjs 3）。
 - 未启用 `strict` 前，函数返回值、`data` 内部结构等不做强制检查；如需加强某模块，将 `// @ts-check` 保持并逐文件收窄即可（见 §6）。
 
 ## 4. 提交前拦截（git hook）
