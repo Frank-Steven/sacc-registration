@@ -1248,6 +1248,120 @@ int main() {
     std::remove(m5_path.c_str());
   }
 
+  // ============ 账号管理 / 数据统计（M7）：user.admin_list / set_status / admin_reset / db.stats ============
+  {
+    const std::string m7_path =
+        std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") + "/sacc_m7_test.db";
+    std::remove(m7_path.c_str());
+
+    sacc::Db sdb;
+    CHECK(sdb.open(m7_path) == SQLITE_OK);
+    {
+      std::ifstream f(std::string(SACC_MIGRATIONS_DIR) + "/0001_init.sql");
+      std::stringstream ss;
+      ss << f.rdbuf();
+      CHECK(sdb.migrate(ss.str(), 1) == SQLITE_OK);
+      std::ifstream f2(std::string(SACC_MIGRATIONS_DIR) + "/0002_seed_roles.sql");
+      std::stringstream ss2;
+      ss2 << f2.rdbuf();
+      CHECK(sdb.migrate(ss2.str(), 2) == SQLITE_OK);
+    }
+
+    auto reg7 = [&](const char* u) -> std::int64_t {
+      json rr = invoke(sdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
+                                        R"(","password":"secret1234","name":")" + u + R"("}})");
+      CHECK(rr["code"] == 0);
+      return rr["data"]["uid"].get<std::int64_t>();
+    };
+    const std::int64_t root7 = reg7("root_m7");
+    const std::int64_t target7 = reg7("target_m7");
+    const std::int64_t other7 = reg7("other_m7");
+    CHECK(sdb.execParams("INSERT INTO user_role (uid, role_id, group_id) VALUES (?, 1, NULL);",
+                         nlohmann::json::array({root7})) == SQLITE_OK);
+
+    // B1：非超管 403；超管列表（uid 倒序）
+    CHECK(invoke(sdb, R"({"op":"user.admin_list","args":{"uid":)" + std::to_string(other7) +
+                        R"(}})")["code"] == 403);
+    r = invoke(sdb, R"({"op":"user.admin_list","args":{"uid":)" + std::to_string(root7) +
+                      R"(,"page":1,"page_size":10}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] == 3 && r["data"]["items"].size() == 3);
+    CHECK(r["data"]["items"][0]["username"] == "other_m7");
+    CHECK(r["data"]["items"][2]["username"] == "root_m7");
+
+    // B1：关键字搜索 + roles 聚合（先给 target 授审核员）
+    CHECK(invoke(sdb, R"({"op":"user_role.grant","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":)" + std::to_string(target7) + R"(,"role_id":3}})")["code"] ==
+          0);
+    r = invoke(sdb, R"({"op":"user.admin_list","args":{"uid":)" + std::to_string(root7) +
+                      R"(,"keyword":"targ"}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] == 1);
+    CHECK(r["data"]["items"][0]["roles"].size() == 1 &&
+          r["data"]["items"][0]["roles"][0]["role_name"] == "审核员");
+    // status 非法 → 422
+    CHECK(invoke(sdb, R"({"op":"user.admin_list","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"status":9}})")["code"] == 422);
+
+    // B2：禁自己 409 / 非法 status 422 / 不存在 404 / 禁 target 成功
+    CHECK(invoke(sdb, R"({"op":"account.set_status","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":)" + std::to_string(root7) + R"(,"status":1}})")["code"] == 409);
+    CHECK(invoke(sdb, R"({"op":"account.set_status","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":)" + std::to_string(target7) + R"(,"status":2}})")["code"] == 422);
+    CHECK(invoke(sdb, R"({"op":"account.set_status","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":999999,"status":1}})")["code"] == 404);
+    CHECK(invoke(sdb, R"({"op":"account.set_status","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":)" + std::to_string(target7) + R"(,"status":1}})")["code"] == 0);
+    // 状态筛选 status=1 → 仅 target；禁用的 target 无法登录
+    r = invoke(sdb, R"({"op":"user.admin_list","args":{"uid":)" + std::to_string(root7) +
+                      R"(,"status":1}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] == 1 && r["data"]["items"][0]["uid"] == target7);
+    CHECK(invoke(sdb, R"({"op":"auth.login","args":{"username":"target_m7","password":"secret1234"}})")["code"] == 403);
+    // 启用恢复
+    CHECK(invoke(sdb, R"({"op":"account.set_status","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"target_uid":)" + std::to_string(target7) + R"(,"status":0}})")["code"] == 0);
+
+    // B3：非超管 403；重置密码 → 12 位随机密码且可登录；同时清除锁定
+    CHECK(invoke(sdb, R"({"op":"account.admin_reset","args":{"uid":)" + std::to_string(other7) +
+                        R"(,"target_uid":)" + std::to_string(target7) + R"(}})")["code"] == 403);
+    r = invoke(sdb, R"({"op":"account.admin_reset","args":{"uid":)" + std::to_string(root7) +
+                      R"(,"target_uid":)" + std::to_string(target7) + R"(}})");
+    CHECK(r["code"] == 0 && r["data"]["password"].is_string() &&
+          r["data"]["password"].get<std::string>().size() == 12);
+    r = invoke(sdb, R"({"op":"auth.login","args":{"username":"target_m7","password":")" +
+                      r["data"]["password"].get<std::string>() + R"("}})");
+    CHECK(r["code"] == 0);
+
+    // B4：非超管 403；超管统计（表计数 / 软删计数 / 库大小）
+    CHECK(invoke(sdb, R"({"op":"db.stats","args":{"uid":)" + std::to_string(other7) +
+                        R"(}})")["code"] == 403);
+    r = invoke(sdb, R"({"op":"db.stats","args":{"uid":)" + std::to_string(root7) + R"(}})");
+    CHECK(r["code"] == 0);
+    CHECK(r["data"]["table_counts"]["account"] == 3 && r["data"]["table_counts"]["user"] == 3 &&
+          r["data"]["table_counts"]["role"] == 3);
+    CHECK(r["data"]["deleted_counts"].contains("activity") &&
+          r["data"]["deleted_counts"].contains("group"));
+    CHECK(r["data"]["db_size"].get<std::int64_t>() > 0);
+
+    // M7：activity.list 支持 group_id 过滤（GroupManager 右侧面板）
+    r = invoke(sdb, R"({"op":"group.create","args":{"uid":)" + std::to_string(root7) +
+                    R"(,"name":"M7Group"}})");
+    CHECK(r["code"] == 0);
+    const std::int64_t g8 = r["data"]["group_id"].get<std::int64_t>();
+    r = invoke(sdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root7) +
+                    R"(,"name":"M7Act","activity_type":0}})");
+    CHECK(r["code"] == 0);
+    const std::int64_t a8 = r["data"]["activity_id"].get<std::int64_t>();
+    CHECK(invoke(sdb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root7) +
+                        R"(,"activity_id":)" + std::to_string(a8) + R"(,"group_id":)" +
+                        std::to_string(g8) + R"(}})")["code"] == 0);
+    r = invoke(sdb, R"({"op":"activity.list","args":{"uid":)" + std::to_string(root7) +
+                      R"(,"group_id":)" + std::to_string(g8) + R"(}})");
+    CHECK(r["code"] == 0 && r["data"]["total"] == 1 &&
+          r["data"]["items"][0]["activity_id"] == a8);
+
+    sdb.close();
+    std::remove(m7_path.c_str());
+  }
+
   std::remove(db_path.c_str());
 
   if (failures == 0) {

@@ -1,6 +1,9 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, Breadcrumb, App as AntApp, theme } from 'antd';
-import { UserOutlined, LogoutOutlined, HomeOutlined, DashboardOutlined, FileTextOutlined, ToolOutlined } from '@ant-design/icons';
+import {
+  UserOutlined, LogoutOutlined, HomeOutlined, DashboardOutlined, FileTextOutlined, ToolOutlined,
+  ApartmentOutlined, TeamOutlined, SafetyCertificateOutlined, SettingOutlined, FileSearchOutlined, DatabaseOutlined,
+} from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../stores/auth.js';
 import { authApi } from '../api/index.js';
@@ -30,7 +33,10 @@ export default function AdminLayout() {
   useI18n();
   useDocumentTitle();
 
-  const isManager = !Array.isArray(roles) || roles.some((r) => r.role_id === 1 || r.role_id === 2);
+  // roles 未就绪时不渲染权限相关菜单（避免非超管/非管理员首屏闪现无权菜单）
+  const isManager = Array.isArray(roles) && roles.some((r) => r.role_id === 1 || r.role_id === 2);
+  // M7：仅超级管理员渲染系统管理菜单（与 RequireSuperAdmin 守卫共用 ['my-roles'] 缓存）
+  const isSuperAdmin = Array.isArray(roles) && roles.some((r) => r.role_id === 1);
 
   const handleLogout = async () => {
     try {
@@ -68,6 +74,36 @@ export default function AdminLayout() {
         { key: `${opPrefix}/review`, label: <Link to={`${opPrefix}/review`}>{t('admin.menu.review')}</Link> },
         { key: `${opPrefix}/checkin`, label: <Link to={`${opPrefix}/checkin`}>{t('admin.menu.checkin')}</Link> },
         { key: `${opPrefix}/stats`, label: <Link to={`${opPrefix}/stats`}>{t('admin.menu.stats')}</Link> },
+      ],
+    });
+  }
+  // M7 系统管理（D1）：三组静态展示，与活动选择无耦合；仅超管可见
+  if (isSuperAdmin) {
+    menuItems.push({
+      key: 'sys-org',
+      type: 'group',
+      label: t('admin.sys.menu.group_org'),
+      children: [
+        { key: '/admin/groups', icon: <ApartmentOutlined />, label: <Link to="/admin/groups">{t('admin.sys.menu.groups')}</Link> },
+        { key: '/admin/accounts', icon: <TeamOutlined />, label: <Link to="/admin/accounts">{t('admin.sys.menu.accounts')}</Link> },
+        { key: '/admin/roles', icon: <SafetyCertificateOutlined />, label: <Link to="/admin/roles">{t('admin.sys.menu.roles')}</Link> },
+      ],
+    });
+    menuItems.push({
+      key: 'sys-system',
+      type: 'group',
+      label: t('admin.sys.menu.group_system'),
+      children: [
+        { key: '/admin/system-config', icon: <SettingOutlined />, label: <Link to="/admin/system-config">{t('admin.sys.menu.system_config')}</Link> },
+        { key: '/admin/audit-logs', icon: <FileSearchOutlined />, label: <Link to="/admin/audit-logs">{t('admin.sys.menu.audit_logs')}</Link> },
+      ],
+    });
+    menuItems.push({
+      key: 'sys-data',
+      type: 'group',
+      label: t('admin.sys.menu.group_data'),
+      children: [
+        { key: '/admin/governance', icon: <DatabaseOutlined />, label: <Link to="/admin/governance">{t('admin.sys.menu.governance')}</Link> },
       ],
     });
   }

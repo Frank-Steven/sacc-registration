@@ -61,17 +61,6 @@ std::string hexToBytes(const std::string& hex) {
   return bytes;
 }
 
-// 计算 PBKDF2 盐与哈希（hex）
-void hashPassword(const std::string& password, std::string& out_salt, std::string& out_hash) {
-  unsigned char salt[kSaltLen];
-  random_bytes(salt, kSaltLen);
-  unsigned char h[32];
-  pbkdf2_sha256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), salt,
-                kSaltLen, kPbkdf2Iterations, h);
-  out_salt = to_hex(salt, kSaltLen);
-  out_hash = to_hex(h, sizeof(h));
-}
-
 // 校验密码与存储值是否一致
 bool verifyPassword(const std::string& password, const std::string& salt_hex,
                     const std::string& hash_hex) {
@@ -84,6 +73,18 @@ bool verifyPassword(const std::string& password, const std::string& salt_hex,
   const std::string computed = to_hex(h, sizeof(h));
   return computed.size() == hash_hex.size() &&
          std::memcmp(computed.data(), hash_hex.data(), computed.size()) == 0;
+}
+
+} // namespace
+
+void hash_password(const std::string& password, std::string& out_salt, std::string& out_hash) {
+  unsigned char salt[kSaltLen];
+  random_bytes(salt, kSaltLen);
+  unsigned char h[32];
+  pbkdf2_sha256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), salt,
+                kSaltLen, kPbkdf2Iterations, h);
+  out_salt = to_hex(salt, kSaltLen);
+  out_hash = to_hex(h, sizeof(h));
 }
 
 // 用户公开资料（不含敏感字段）
@@ -114,8 +115,6 @@ bool loadProfile(Db& db, std::int64_t uid, nlohmann::json& out_row) {
   return true;
 }
 
-} // namespace
-
 nlohmann::json auth_register(Db& db, const nlohmann::json& args) {
   const std::string username = str(args, "username");
   const std::string password = str(args, "password");
@@ -123,7 +122,7 @@ nlohmann::json auth_register(Db& db, const nlohmann::json& args) {
   if (!validPassword(password)) return err(kValidation, "密码长度须为 8~128 位");
 
   std::string salt_hex, hash_hex;
-  hashPassword(password, salt_hex, hash_hex);
+  hash_password(password, salt_hex, hash_hex);
   const std::int64_t now = now_ts();
 
   if (db.begin() != SQLITE_OK) return err(kDbError, "begin failed");
@@ -288,7 +287,7 @@ nlohmann::json auth_reset_confirm(Db& db, const nlohmann::json& args) {
 
   const std::int64_t uid = rows[0].value("uid", 0);
   std::string salt_hex, hash_hex;
-  hashPassword(password, salt_hex, hash_hex);
+  hash_password(password, salt_hex, hash_hex);
   if (db.execParams("UPDATE account SET password_hash = ?, salt = ?, reset_token = NULL, "
                     "reset_expire = NULL, login_fail_count = 0, lock_until = NULL WHERE uid = ?;",
                     nlohmann::json::array({hash_hex, salt_hex, uid})) != SQLITE_OK) {

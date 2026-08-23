@@ -916,3 +916,108 @@ test('http M4: 导出（分块/CSV）与统计（看板/趋势/跨活动）全�
   }
 });
 
+test('http M7: 账号管理 / 数据统计 / 备份管理（超管隔离 + 下载）', async () => {
+  const { tmp, runtime } = await freshRuntime();
+  const dbPath = path.join(tmp, 'sacc_test.db');
+  const server = createServer({
+    runtime,
+    routes: createRoutes({
+      runtime,
+      config: { jwtSecret: 'http-m7-secret', wasmPath: WASM_PATH, dbPath },
+    }),
+    frontendDist: path.join(tmp, 'no-dist'),
+    logger: { error: () => {} },
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const base = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (server.address()).port}`;
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { headers });
+  const post = (p, body, headers = {}) =>
+    fetch(`${base}${p}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+
+  try {
+    const reg = async (username) => {
+      const out = await (await post('/api/auth/register', { username, password: 'secret1234' })).json();
+      assert.equal(out.code, 0);
+      return out.data.user;
+    };
+    const login = async (username, password) =>
+      (await (await post('/api/auth/login', { username, password })).json()).data.token;
+    const root = await reg('root_m7');
+    await reg('admin_m7');
+    const userC = await reg('user_m7');
+    const rootH = { authorization: `Bearer ${await login('root_m7', 'secret1234')}` };
+    const adminH = { authorization: `Bearer ${await login('admin_m7', 'secret1234')}` };
+
+    // 引导 root 为超管（同 native 单测）
+    const boot = await runtime.invoke({
+      op: 'db.exec',
+      args: { sql: `INSERT INTO user_role (uid, role_id, group_id) VALUES (${root.uid}, 1, NULL);` },
+    });
+    assert.equal(boot.code, 0);
+
+    // B1：非超管 403；超管列表 uid 倒序；keyword 过滤；非法 status 422
+    assert.equal((await (await get('/api/admin/users', adminH)).json()).code, 403);
+    let r = await (await get('/api/admin/users', rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.total, 3);
+    assert.equal(r.data.items[0].uid, userC.uid, 'uid 倒序 → user_m7 最新在前');
+    assert.equal(r.data.items[2].uid, root.uid);
+    r = await (await get(`/api/admin/users?keyword=${encodeURIComponent('admin_m')}`, rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.total, 1);
+    assert.equal(r.data.items[0].username, 'admin_m7');
+    assert.equal((await (await get('/api/admin/users?status=9', rootH)).json()).code, 422);
+
+    // B2：禁自己 409 / 非法 status 422 / 禁 user_m7 → 登录 403 → 启用恢复
+    assert.equal((await (await post(`/api/admin/users/${root.uid}/status`, { status: 1 }, rootH)).json()).code, 409);
+    assert.equal((await (await post(`/api/admin/users/${userC.uid}/status`, { status: 2 }, rootH)).json()).code, 422);
+    assert.equal((await (await post(`/api/admin/users/${userC.uid}/status`, { status: 1 }, rootH)).json()).code, 0);
+    assert.equal((await (await post('/api/auth/login', { username: 'user_m7', password: 'secret1234' })).json()).code, 403, '禁用后不可登录');
+    assert.equal((await (await post(`/api/admin/users/${userC.uid}/status`, { status: 0 }, rootH)).json()).code, 0);
+
+    // B3：非超管 403；重置密码 → 12 位随机密码可登录
+    assert.equal((await (await post(`/api/admin/users/${userC.uid}/reset-password`, {}, adminH)).json()).code, 403);
+    r = await (await post(`/api/admin/users/${userC.uid}/reset-password`, {}, rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.password.length, 12);
+    assert.equal((await (await post('/api/auth/login', { username: 'user_m7', password: r.data.password })).json()).code, 0);
+
+    // B4：非超管 403；超管统计
+    assert.equal((await (await get('/api/admin/db/stats', adminH)).json()).code, 403);
+    r = await (await get('/api/admin/db/stats', rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.table_counts.account, 3);
+    assert.equal(r.data.table_counts.user, 3);
+    assert.ok(r.data.db_size > 0);
+
+    // B5：备份管理（列表空 → 触发备份 → 列表 1 → 下载；非超管 403；非法文件名 422）
+    assert.equal((await (await get('/api/admin/backups')).json()).code, 401, '未登录 401');
+    assert.equal((await (await get('/api/admin/backups', adminH)).json()).code, 403, '非超管 403');
+    r = await (await get('/api/admin/backups', rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.items.length, 0, '备份目录尚未创建 → 空列表');
+    r = await (await post('/api/admin/backups', {}, rootH)).json();
+    assert.equal(r.code, 0);
+    assert.match(r.data.file, /^sacc-\d{8}-\d{6}\.db$/);
+    r = await (await get('/api/admin/backups', rootH)).json();
+    assert.equal(r.code, 0);
+    assert.equal(r.data.items.length, 1);
+    assert.ok(r.data.items[0].size > 0);
+    const dl = await get(`/api/admin/backups/${r.data.items[0].name}`, rootH);
+    assert.equal(dl.status, 200);
+    assert.match(dl.headers.get('content-disposition'), /attachment/);
+    assert.ok((await dl.arrayBuffer()).byteLength > 0);
+    assert.equal((await (await get('/api/admin/backups/../sacc_test.db', rootH)).json()).code, 404, '路径穿越在 URL 规范化层即被拦截（点段折叠 → 未命中路由）');
+    assert.equal((await (await get('/api/admin/backups/..%2Fsacc_test.db', rootH)).json()).code, 422, '编码斜杠留在文件名 → BACKUP_RE 拒绝');
+    assert.equal((await (await get('/api/admin/backups/not-a-backup.txt', rootH)).json()).code, 422);
+    assert.equal((await (await get('/api/admin/backups/sacc-20260101-000000.db', rootH)).json()).code, 404, '命名合法但不存在 → 404');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+

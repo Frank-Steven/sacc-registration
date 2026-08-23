@@ -42,6 +42,30 @@ export function RequireAdmin({ children }) {
   return children;
 }
 
+// M7 系统管理（D2）：仅超级管理员（role_id === 1）可访问；其余角色 → /403
+// 与 RequireAdmin 共用 ['my-roles'] 缓存，菜单显隐同源
+export function RequireSuperAdmin({ children }) {
+  const token = useAuthStore((s) => s.token);
+  const uid = useAuthStore((s) => s.user?.uid);
+  const location = useLocation();
+  const { data } = useQuery({
+    queryKey: ['my-roles', uid],
+    queryFn: () => adminRoleApi.myRoles(uid),
+    enabled: !!token && !!uid,
+    staleTime: 5 * 60 * 1000,
+  });
+  const roles = data?.items;
+  if (!token) {
+    const redirect = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?redirect=${redirect}`} replace />;
+  }
+  // roles 已就绪（含空列表）且不含超管角色 → 403
+  if (Array.isArray(roles) && !roles.some((r) => r.role_id === 1)) {
+    return <Navigate to="/403" replace />;
+  }
+  return children;
+}
+
 // 仅游客：已登录访问登录/注册页 → 工作台
 export function GuestOnly({ children }) {
   const token = useAuthStore((s) => s.token);

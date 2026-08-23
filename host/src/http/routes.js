@@ -2,8 +2,11 @@
 // - pattern 支持 RegExp（M1）与字符串路径（含 :param，M2 起，命中注入 ctx.params）
 // - ctx = { query, body, headers, params }（server.js 注入）
 // - 管理端统一 /api/admin/*：宿主校验 JWT 后透传 uid 入 wasm，权限判定在 wasm 内
+import fs from 'node:fs';
+import path from 'node:path';
 import { Errors } from '../errors.js';
 import { signJwt, verifyJwt, bearerToken } from '../auth/jwt.js';
+import { createBackup } from '../task/backup.js';
 
 // 解析 Bearer token 并校验，返回 { uid, username }；无效返回 null
 function requireAuth(ctx, config) {
@@ -36,6 +39,20 @@ export function createRoutes({ runtime, config }) {
       args[argKey] = num;
     }
     return runtime.invoke({ op, args });
+  };
+
+  // 备份文件命名（与 task/backup.js BACKUP_RE 一致）；文件名仅来自数据库生成，杜绝路径穿越
+  const BACKUP_RE = /^sacc-\d{8}-\d{6}(?:-\d+)?\.db$/;
+  const backupDir = () => path.join(path.dirname(config.dbPath), 'backup');
+  // 宿主能力路由（备份管理）的超管校验：透查 wasm user_role.list 判定 role_id=1
+  const requireSuperAdmin = async (ctx) => {
+    const auth = requireAuth(ctx, config);
+    if (!auth) return { code: Errors.UNAUTHORIZED, message: '未登录或会话已过期' };
+    const out = await runtime.invoke({ op: 'user_role.list', args: { uid: auth.uid, target_uid: auth.uid } });
+    if (out.code !== Errors.OK || !(out.data?.items || []).some((r) => r.role_id === 1)) {
+      return { code: Errors.FORBIDDEN, message: '仅超级管理员可管理备份' };
+    }
+    return auth;
   };
 
   return [
@@ -152,6 +169,66 @@ export function createRoutes({ runtime, config }) {
     { method: 'POST', pattern: '/api/admin/roles/:roleId/users', handler: admin('user_role.grant', { role_id: 'roleId' }) },
     { method: 'DELETE', pattern: '/api/admin/user-roles/:uid/:roleId', handler: admin('user_role.revoke', { target_uid: 'uid', role_id: 'roleId' }) },
     { method: 'GET', pattern: '/api/admin/audit-logs', handler: admin('audit_log.list') },
+
+    // ---------- 管理端（M7 系统管理 B1~B4：账号 / 数据统计） ----------
+    { method: 'GET', pattern: '/api/admin/users', handler: admin('user.admin_list') },
+    { method: 'POST', pattern: '/api/admin/users/:uid/status', handler: admin('account.set_status', { target_uid: 'uid' }) },
+    { method: 'POST', pattern: '/api/admin/users/:uid/reset-password', handler: admin('account.admin_reset', { target_uid: 'uid' }) },
+    { method: 'GET', pattern: '/api/admin/db/stats', handler: admin('db.stats') },
+
+    // ---------- 管理端（M7 B5：备份管理，宿主能力 + 超管校验） ----------
+    {
+      method: 'GET',
+      pattern: '/api/admin/backups',
+      handler: async (ctx) => {
+        const auth = await requireSuperAdmin(ctx);
+        if (!auth.uid) return auth;
+        let names = [];
+        try {
+          names = fs.readdirSync(backupDir()).filter((f) => BACKUP_RE.test(f)).sort();
+        } catch {
+          /* 备份目录尚未创建 */
+        }
+        const items = names
+          .map((name) => {
+            const st = fs.statSync(path.join(backupDir(), name));
+            return { name, size: st.size, mtime: Math.floor(st.mtimeMs / 1000) };
+          })
+          .reverse(); // 最新在前
+        return { code: 0, data: { items } };
+      },
+    },
+    {
+      method: 'POST',
+      pattern: '/api/admin/backups',
+      handler: async (ctx) => {
+        const auth = await requireSuperAdmin(ctx);
+        if (!auth.uid) return auth;
+        try {
+          const dest = await createBackup({ runtime, wasmPath: config.wasmPath, dbPath: config.dbPath, verify: true });
+          return { code: 0, data: { file: path.basename(dest) } };
+        } catch (err) {
+          return { code: Errors.INTERNAL, message: `备份失败：${err.message}` };
+        }
+      },
+    },
+    {
+      method: 'GET',
+      pattern: '/api/admin/backups/:file',
+      handler: async (ctx) => {
+        const auth = await requireSuperAdmin(ctx);
+        if (!auth.uid) return auth;
+        const name = ctx.params.file;
+        if (!BACKUP_RE.test(name)) return { code: Errors.VALIDATION, message: '备份文件名非法' };
+        const abs = path.join(backupDir(), name);
+        if (!fs.existsSync(abs)) return { code: Errors.NOT_FOUND, message: '备份文件不存在' };
+        return {
+          code: 0,
+          data: {},
+          download: { filename: name, contentType: 'application/octet-stream', content: fs.readFileSync(abs) },
+        };
+      },
+    },
 
     // ---------- 报名端（公开只读，M2） ----------
     {

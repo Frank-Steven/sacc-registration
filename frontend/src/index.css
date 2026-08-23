@@ -21,3 +21,18 @@ body {
 }
 
 a { text-decoration: none; }
+
+/* M7 系统管理：禁用账号整行降透明度（走 antd 中性色，暗色主题适配） */
+.sys-account-disabled > td {
+  opacity: 0.55;
+}
+
+/* M7 分组树节点操作：hover / 键盘焦点时显示（可访问性 2.7，替代内联 opacity 0） */
+.tree-node-actions {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.ant-tree-node-content-wrapper:hover .tree-node-actions,
+.tree-node-actions:focus-within {
+  opacity: 1;
+}

@@ -4,7 +4,7 @@ import { Spin } from 'antd';
 import AuthLayout from './layouts/AuthLayout.jsx';
 import UserLayout from './layouts/UserLayout.jsx';
 import AdminLayout from './layouts/AdminLayout.jsx';
-import { RequireAuth, RequireAdmin, GuestOnly, Forbidden, NotFound } from './guards/index.jsx';
+import { RequireAuth, RequireAdmin, RequireSuperAdmin, GuestOnly, Forbidden, NotFound } from './guards/index.jsx';
 import { useAuthStore } from './stores/auth.js';
 
 // 页面级分包（React.lazy + Suspense）：auth / activities / 其余报名端页面 / admin（M6 管理端）
@@ -28,6 +28,13 @@ const Registrations = lazy(() => import('./pages/admin/Registrations.jsx'));
 const Review = lazy(() => import('./pages/admin/Review.jsx'));
 const Checkin = lazy(() => import('./pages/admin/Checkin.jsx'));
 const Stats = lazy(() => import('./pages/admin/Stats.jsx'));
+// M7 系统管理页（懒加载，独立 chunk）
+const GroupManager = lazy(() => import('./pages/admin/GroupManager.jsx'));
+const AccountManager = lazy(() => import('./pages/admin/AccountManager.jsx'));
+const RoleManager = lazy(() => import('./pages/admin/RoleManager.jsx'));
+const SystemConfig = lazy(() => import('./pages/admin/SystemConfig.jsx'));
+const AuditLogs = lazy(() => import('./pages/admin/AuditLogs.jsx'));
+const Governance = lazy(() => import('./pages/admin/Governance.jsx'));
 
 const fallback = (
   <div style={{ textAlign: 'center', padding: 64 }}>
@@ -77,6 +84,13 @@ export const router = createBrowserRouter([
       { path: 'activities/:id/checkin', element: suspend(<Checkin />) },
       { path: 'activities/:id/stats', element: suspend(<Stats />) },
       { path: 'templates', element: suspend(<Templates />) },
+      // M7 系统管理（仅超管，RequireSuperAdmin 守卫；后端 403 兜底）
+      { path: 'groups', element: suspend(<RequireSuperAdmin><GroupManager /></RequireSuperAdmin>) },
+      { path: 'accounts', element: suspend(<RequireSuperAdmin><AccountManager /></RequireSuperAdmin>) },
+      { path: 'roles', element: suspend(<RequireSuperAdmin><RoleManager /></RequireSuperAdmin>) },
+      { path: 'system-config', element: suspend(<RequireSuperAdmin><SystemConfig /></RequireSuperAdmin>) },
+      { path: 'audit-logs', element: suspend(<RequireSuperAdmin><AuditLogs /></RequireSuperAdmin>) },
+      { path: 'governance', element: suspend(<RequireSuperAdmin><Governance /></RequireSuperAdmin>) },
       { path: '*', element: <NotFound /> },
     ],
   },

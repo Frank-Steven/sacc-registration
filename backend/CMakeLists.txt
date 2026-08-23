@@ -38,6 +38,7 @@ add_library(sacc_core STATIC
   src/config/template.cpp
   src/config/config.cpp
   src/config/role.cpp
+  src/config/account.cpp
   src/data/registration.cpp
   src/data/validation.cpp
   src/data/review.cpp

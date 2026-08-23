@@ -296,6 +296,11 @@ nlohmann::json activity_list(Db& db, const nlohmann::json& args) {
     conds.push_back("a.name LIKE ?");
     params.push_back("%" + keyword + "%");
   }
+  // M7 GroupManager 右侧面板：按分组过滤活动（子查询不破坏既有 scope 过滤结构）
+  if (args.contains("group_id") && cfg_int(args, "group_id", 0) > 0) {
+    conds.push_back("a.activity_id IN (SELECT activity_id FROM activity_group WHERE group_id = ?)");
+    params.push_back(cfg_int(args, "group_id", 0));
+  }
   const std::string where =
       conds.empty() ? "" : " WHERE " + [&] {
         std::string s;

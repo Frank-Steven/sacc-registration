@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 #include <string>
 
+#include "config/account.h"
 #include "config/activity.h"
 #include "config/config.h"
 #include "config/form.h"
@@ -220,6 +221,15 @@ nlohmann::json dispatch(Db& db, const nlohmann::json& req) {
     if (op == "user_notify_pref.delete") return user_notify_pref_delete(db, args);
     if (op == "user_pref.list") return user_pref_list(db, args);
     if (op == "user_pref.set") return user_pref_set(db, args);
+  }
+  // 账号管理 / 数据统计（M7 系统管理 B1~B4，仅超管）
+  if (op == "user.admin_list" || op == "account.set_status" || op == "account.admin_reset" ||
+      op == "db.stats") {
+    if (!db.isOpen()) return err(kDbError, "db not open");
+    if (op == "user.admin_list") return account_admin_list(db, args);
+    if (op == "account.set_status") return account_set_status(db, args);
+    if (op == "account.admin_reset") return account_admin_reset(db, args);
+    if (op == "db.stats") return db_stats(db, args);
   }
   return err(kUnknownOp, "unknown op: " + op);
 }

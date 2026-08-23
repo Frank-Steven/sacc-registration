@@ -20,6 +20,7 @@ add_executable(backend_wasm
   ${SACC_SOURCES_DIR}/src/config/template.cpp
   ${SACC_SOURCES_DIR}/src/config/config.cpp
   ${SACC_SOURCES_DIR}/src/config/role.cpp
+  ${SACC_SOURCES_DIR}/src/config/account.cpp
   ${SACC_SOURCES_DIR}/src/data/registration.cpp
   ${SACC_SOURCES_DIR}/src/data/validation.cpp
   ${SACC_SOURCES_DIR}/src/data/review.cpp
