@@ -68,6 +68,7 @@ export default function ActivityEdit() {
       description: detail.description || '',
       activity_type: detail.activity_type,
       window: detail.start_time ? [dayjs.unix(detail.start_time), dayjs.unix(detail.end_time || detail.start_time)] : undefined,
+      competition: detail.competition_start ? [dayjs.unix(detail.competition_start), dayjs.unix(detail.competition_end || detail.competition_start)] : undefined,
       max_slots: detail.max_slots,
       need_review: !!detail.need_review,
       allow_modify: !!detail.allow_modify,
@@ -88,6 +89,8 @@ export default function ActivityEdit() {
       activity_type: values.activity_type,
       start_time: toUnix(values.window?.[0]),
       end_time: toUnix(values.window?.[1]),
+      competition_start: toUnix(values.competition?.[0]),
+      competition_end: toUnix(values.competition?.[1]),
       max_slots: values.max_slots ?? 0,
       need_review: !!values.need_review,
       allow_modify: !!values.allow_modify,
@@ -156,6 +159,9 @@ export default function ActivityEdit() {
           <Form.Item name="window" label={t('admin.act.window')} tooltip={t('admin.act.window_ph')}>
             <DatePicker.RangePicker showTime style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item name="competition" label={t('admin.act.competition')} tooltip={t('admin.act.competition_ph')}>
+            <DatePicker.RangePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
           <Form.Item name="max_slots" label={t('admin.act.max_slots')} tooltip={t('admin.act.max_slots_hint')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
@@ -199,6 +205,9 @@ export default function ActivityEdit() {
             <Radio.Group disabled={readOnly} options={[0, 1, 2].map((v) => ({ value: v, label: t(`activityType.${v}`) }))} />
           </Form.Item>
           <Form.Item name="window" label={t('admin.act.window')} style={{ maxWidth: 640 }}>
+            <DatePicker.RangePicker showTime style={{ width: '100%' }} disabled={readOnly} />
+          </Form.Item>
+          <Form.Item name="competition" label={t('admin.act.competition')} tooltip={t('admin.act.competition_ph')} style={{ maxWidth: 640 }}>
             <DatePicker.RangePicker showTime style={{ width: '100%' }} disabled={readOnly} />
           </Form.Item>
           <Form.Item name="max_slots" label={t('admin.act.max_slots')} tooltip={t('admin.act.max_slots_hint')}>

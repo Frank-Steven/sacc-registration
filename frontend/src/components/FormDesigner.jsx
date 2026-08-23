@@ -25,6 +25,13 @@ const linesToOptions = (text) => {
   return JSON.stringify(arr);
 };
 
+// 常用校验预设：一键填充 validation.regex（学号规则可按学校调整位数）
+const VALIDATION_PRESETS = [
+  { key: 'phone', label: '手机号（11 位）', regex: '^1\\d{10}$' },
+  { key: 'student_id', label: '学号（9~12 位数字）', regex: '^\\d{9,12}$' },
+  { key: 'email', label: '邮箱', regex: '^[\\w.+-]+@[\\w-]+(\\.[\\w-]+)+$' },
+];
+
 // 表单设计器：表单组管理 + 字段编辑（key/type 冻结）+ 模板保存/套用
 export default function FormDesigner({ activityId, readOnly }) {
   useI18n();
@@ -130,6 +137,22 @@ export default function FormDesigner({ activityId, readOnly }) {
     } catch (err) {
       message.error(err.message);
     }
+  };
+
+  // 校验预设：合并 regex 到已有 validation JSON（不覆盖其他规则）
+  const applyPreset = (key) => {
+    const preset = VALIDATION_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    const cur = fieldForm.getFieldValue('validation');
+    let rule = {};
+    try {
+      rule = JSON.parse(cur || '{}');
+    } catch {
+      rule = {};
+    }
+    if (rule && typeof rule === 'object') rule.regex = preset.regex;
+    else rule = { regex: preset.regex };
+    fieldForm.setFieldsValue({ validation: JSON.stringify(rule) });
   };
 
   // 上移 / 下移：交换相邻字段 sort_order
@@ -314,7 +337,17 @@ export default function FormDesigner({ activityId, readOnly }) {
             <Input />
           </Form.Item>
           <Form.Item name="validation" label={t('admin.design.validation')} tooltip='JSON：{"min":1,"max":100,"regex":"...","min_length":2,"max_length":50,"min_items":1,"max_items":3}'>
-            <Input.TextArea rows={2} placeholder='JSON：{"min":1,"max":100,"regex":"...","min_length":2,"max_length":50,"min_items":1,"max_items":3}' />
+            <Space direction="vertical" style={{ width: '100%' }} size={4}>
+              <Input.TextArea rows={2} placeholder='JSON：{"min":1,"max":100,"regex":"...","min_length":2,"max_length":50,"min_items":1,"max_items":3}' />
+              <Space size={4} wrap>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('admin.design.validation_preset')}</Text>
+                {VALIDATION_PRESETS.map((p) => (
+                  <Button key={p.key} size="small" type="dashed" onClick={() => applyPreset(p.key)}>
+                    {p.label}
+                  </Button>
+                ))}
+              </Space>
+            </Space>
           </Form.Item>
           <Form.Item name="is_required" label={t('admin.design.required')}>
             <Radio.Group>

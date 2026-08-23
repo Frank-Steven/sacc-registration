@@ -20,6 +20,8 @@ nlohmann::json publicActivity(const nlohmann::json& row) {
       {"activity_type", row.value("activity_type", 0)},
       {"start_time", row.value("start_time", 0)},
       {"end_time", row.value("end_time", 0)},
+      {"competition_start", row.value("competition_start", 0)},
+      {"competition_end", row.value("competition_end", 0)},
       {"max_slots", row.value("max_slots", 0)},
       {"need_review", row.value("need_review", 0)},
       {"allow_modify", row.value("allow_modify", 0)},
@@ -27,23 +29,34 @@ nlohmann::json publicActivity(const nlohmann::json& row) {
 }
 
 // 校验可写字段并构建活动基础信息（返回 nullptr 或错误响应）
+// 说明：create 必含 name；update 可能只改部分字段，故 name/activity_type 按存在性校验，
+// 而时间/名额类规则（非零即生效）始终校验，防止 update 携带非法比赛时间被跳过。
 const nlohmann::json* validateBase(const nlohmann::json& args) {
   static const nlohmann::json empty;
-  if (!args.contains("name")) return nullptr;
-  const std::string name = cfg_str(args, "name");
-  if (name.empty() || name.size() > 100) {
-    static const nlohmann::json err = cfg_err(kValidation, "活动名称须为 1~100 字符");
-    return &err;
+  if (args.contains("name")) {
+    const std::string name = cfg_str(args, "name");
+    if (name.empty() || name.size() > 100) {
+      static const nlohmann::json err = cfg_err(kValidation, "活动名称须为 1~100 字符");
+      return &err;
+    }
   }
-  const std::int64_t type = cfg_int(args, "activity_type", 0);
-  if (type < 0 || type > 2) {
-    static const nlohmann::json err = cfg_err(kValidation, "activity_type 须为 0/1/2");
-    return &err;
+  if (args.contains("activity_type")) {
+    const std::int64_t type = cfg_int(args, "activity_type", 0);
+    if (type < 0 || type > 2) {
+      static const nlohmann::json err = cfg_err(kValidation, "activity_type 须为 0/1/2");
+      return &err;
+    }
   }
   const std::int64_t start = cfg_int(args, "start_time", 0);
   const std::int64_t end = cfg_int(args, "end_time", 0);
   if (start < 0 || end < 0 || (end != 0 && start != 0 && end < start)) {
     static const nlohmann::json err = cfg_err(kValidation, "时间参数不合法（end 不得早于 start）");
+    return &err;
+  }
+  const std::int64_t cstart = cfg_int(args, "competition_start", 0);
+  const std::int64_t cend = cfg_int(args, "competition_end", 0);
+  if (cstart < 0 || cend < 0 || (cend != 0 && cstart != 0 && cend < cstart)) {
+    static const nlohmann::json err = cfg_err(kValidation, "比赛时间不合法（结束不得早于开始）");
     return &err;
   }
   if (cfg_int(args, "max_slots", 0) < 0) {
@@ -130,12 +143,15 @@ nlohmann::json activity_create(Db& db, const nlohmann::json& args) {
 
   if (db.begin() != SQLITE_OK) return cfg_err(kDbError, "begin failed");
   if (db.execParams("INSERT INTO activity (name, description, activity_type, start_time, end_time, "
-                    "max_slots, status, need_review, allow_modify, is_deleted, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?);",
+                    "competition_start, competition_end, max_slots, status, need_review, "
+                    "allow_modify, is_deleted, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, ?);",
                     nlohmann::json::array(
                         {cfg_str(args, "name"), cfg_str(args, "description"), activity_type, start,
-                         end, cfg_int(args, "max_slots", 0), cfg_bool(args, "need_review", false),
-                         cfg_bool(args, "allow_modify", false), now})) != SQLITE_OK) {
+                         end, cfg_int(args, "competition_start", 0),
+                         cfg_int(args, "competition_end", 0), cfg_int(args, "max_slots", 0),
+                         cfg_bool(args, "need_review", false), cfg_bool(args, "allow_modify", false),
+                         now})) != SQLITE_OK) {
     db.rollback();
     return cfg_err(kDbError, "insert activity failed: " + db.lastError());
   }
@@ -178,6 +194,7 @@ nlohmann::json activity_update(Db& db, const nlohmann::json& args) {
   nlohmann::json detail_before = nlohmann::json::object();
   nlohmann::json detail_after = nlohmann::json::object();
   const char* int_keys[] = {"activity_type", "start_time", "end_time",
+                            "competition_start", "competition_end",
                             "max_slots",     "need_review", "allow_modify"};
   if (args.contains("status")) {
     detail_before["status"] = from;
@@ -210,14 +227,17 @@ nlohmann::json activity_update(Db& db, const nlohmann::json& args) {
 
   if (db.begin() != SQLITE_OK) return cfg_err(kDbError, "begin failed");
   if (db.execParams("UPDATE activity SET name = ?, description = ?, activity_type = ?, "
-                    "start_time = ?, end_time = ?, max_slots = ?, need_review = ?, "
-                    "allow_modify = ?, status = ? WHERE activity_id = ?;",
+                    "start_time = ?, end_time = ?, competition_start = ?, competition_end = ?, "
+                    "max_slots = ?, need_review = ?, allow_modify = ?, status = ? "
+                    "WHERE activity_id = ?;",
                     nlohmann::json::array(
                         {fallback_str("name", row.value("name", "")),
                          fallback_str("description", row.value("description", "")),
                          fallback_int("activity_type", row.value("activity_type", 0)),
                          fallback_int("start_time", row.value("start_time", 0)),
                          fallback_int("end_time", row.value("end_time", 0)),
+                         fallback_int("competition_start", row.value("competition_start", 0)),
+                         fallback_int("competition_end", row.value("competition_end", 0)),
                          fallback_int("max_slots", row.value("max_slots", 0)),
                          fallback_int("need_review", row.value("need_review", 0)),
                          fallback_int("allow_modify", row.value("allow_modify", 0)), to,
@@ -431,6 +451,20 @@ nlohmann::json activity_public_detail(Db& db, const nlohmann::json& args) {
   nlohmann::json detail = buildDetail(db, row);
   data["groups"] = detail["groups"];
   data["forms"] = detail["forms"];
+  // 比赛地点等展示配置（venue_name / venue_address …），供报名端信息展示区渲染
+  {
+    nlohmann::json cfg_rows;
+    std::string qerr;
+    if (db.query("SELECT config_key, config_value FROM activity_config WHERE activity_id = ? "
+                 "ORDER BY config_key;",
+                 nlohmann::json::array({activity_id}), cfg_rows, qerr) == SQLITE_OK) {
+      nlohmann::json configs = nlohmann::json::object();
+      for (const auto& c : cfg_rows) configs[c.value("config_key", "")] = c.value("config_value", "");
+      data["configs"] = std::move(configs);
+    } else {
+      data["configs"] = nlohmann::json::object();
+    }
+  }
   return cfg_ok(std::move(data));
 }
 

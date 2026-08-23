@@ -179,9 +179,9 @@ nlohmann::json form_field_create(Db& db, const nlohmann::json& args) {
   const std::int64_t field_type = cfg_int(args, "field_type", 0);
   if (!validFieldKey(field_key)) return cfg_err(kValidation, "field_key 不合法（小写字母开头 2~32 位）");
   if (field_label.empty()) return cfg_err(kValidation, "field_label 不能为空");
-  if (field_type < 0 || field_type > 5) return cfg_err(kValidation, "field_type 须为 0~5");
+  if (field_type < 0 || field_type > 7) return cfg_err(kValidation, "field_type 须为 0~7");
   if (const nlohmann::json* e = validateFieldJson(args)) return *e;
-  if ((field_type == 2 || field_type == 3) && cfg_str(args, "options").empty()) {
+  if ((field_type == 2 || field_type == 3 || field_type == 6) && cfg_str(args, "options").empty()) {
     return cfg_err(kValidation, "单选/多选字段必须提供 options");
   }
   {

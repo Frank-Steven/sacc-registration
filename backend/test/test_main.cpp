@@ -44,6 +44,14 @@ int main() {
     CHECK(d.exec("ALTER TABLE \"user\" ADD COLUMN lang TEXT NOT NULL DEFAULT 'zh';") == SQLITE_OK);
   };
 
+  // 0009：activity 增加比赛时间列；对只建部分 schema 的测试块直接补列（exec 不改变 user_version）
+  const auto ensureCompetition = [](sacc::Db& d) {
+    CHECK(d.exec("ALTER TABLE activity ADD COLUMN competition_start INTEGER NOT NULL DEFAULT 0;") ==
+          SQLITE_OK);
+    CHECK(d.exec("ALTER TABLE activity ADD COLUMN competition_end INTEGER NOT NULL DEFAULT 0;") ==
+          SQLITE_OK);
+  };
+
   // ping / echo / sys.version
   json r = invoke(db, R"({"op":"ping"})");
   CHECK(r["code"] == 0 && r["data"]["pong"] == true);
@@ -238,6 +246,7 @@ int main() {
       CHECK(cdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
     ensureLangAvatar(cdb);
+    ensureCompetition(cdb);
 
     // 注册五个用户：root(超管引导) / admin_a / admin_b / reviewer / outsider
     auto reg = [&](const char* u) -> std::int64_t {
@@ -542,6 +551,7 @@ int main() {
       CHECK(rdb.migrate(ss3.str(), 3) == SQLITE_OK);
     }
     ensureLangAvatar(rdb);
+    ensureCompetition(rdb);
 
     // 受限正则匹配器（wasm 无 std::regex）
     CHECK(sacc::match_pattern("^1\\d{10}$", "13800138000"));
@@ -580,8 +590,13 @@ int main() {
 
     // 活动 act：need_review / allow_modify / max_slots=2，绑 g1，发布
     rr = invoke(rdb, R"({"op":"activity.create","args":{"uid":)" + std::to_string(root_uid) +
-                    R"(,"name":"Workshop","need_review":true,"allow_modify":true,"max_slots":2}})");
+                    R"(,"name":"Workshop","need_review":true,"allow_modify":true,"max_slots":2,
+                       "competition_start":1700000000,"competition_end":1700003600}})");
     const std::int64_t act = rr["data"]["activity_id"].get<std::int64_t>();
+    // 比赛时间非法（结束早于开始）→ 422
+    CHECK(invoke(rdb, R"({"op":"activity.update","args":{"uid":)" + std::to_string(root_uid) +
+                      R"(,"activity_id":)" + std::to_string(act) +
+                      R"(,"competition_start":2000,"competition_end":1000}})")["code"] == 422);
     CHECK(invoke(rdb, R"({"op":"activity_group.bind","args":{"uid":)" + std::to_string(root_uid) +
                       R"(,"activity_id":)" + std::to_string(act) + R"(,"group_id":)" +
                       std::to_string(g1) + R"(}})")["code"] == 0);
@@ -605,7 +620,11 @@ int main() {
     const std::int64_t f_email = mk_field("email", "邮箱", 0, R"(,"validation":"{\"regex\":\"^[^@]+@[^@]+\\\\.com$\"}")");
     const std::int64_t f_age = mk_field("age", "年龄", 1, R"(,"validation":"{\"min\":18,\"max\":100}")");
     const std::int64_t f_hobby = mk_field("hobby", "爱好", 3, R"(,"options":"[\"篮球\",\"足球\",\"羽毛球\"]","validation":"{\"min_items\":1}")");
+    // 新增类型：6 单选（服从调剂） / 7 多行文本（参赛宣言）
+    const std::int64_t f_adjust = mk_field("adjust", "服从调剂", 6, R"(,"options":"[\"是\",\"否\"]")");
+    const std::int64_t f_bio = mk_field("bio", "参赛宣言", 7, R"(,"validation":"{\"min_length\":5}")");
     (void)f_name; (void)f_gender; (void)f_email; (void)f_age; (void)f_hobby;
+    (void)f_adjust; (void)f_bio;
 
     auto fields_json = [&](const std::string& payload) {
       return std::string(R"("fields":[)") + payload + R"(],"current_step":1)";
@@ -621,14 +640,16 @@ int main() {
                   R"(,"activity_id":)" + std::to_string(act) + R"(}})");
     CHECK(rr["code"] == 0 && rr["data"]["registration_id"] == r1);
 
-    // 草稿保存：字段正确
+    // 草稿保存：字段正确（含单选 6 / 多行文本 7 合法值）
     rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u1) +
                   R"(,"registration_id":)" + std::to_string(r1) + "," +
                   fields_json(R"({"field_id":)" + std::to_string(f_name) + R"(,"value":"Alice"},{"field_id":)" +
                               std::to_string(f_gender) + R"(,"value":"女"},{"field_id":)" +
                               std::to_string(f_email) + R"(,"value":"a@b.com"},{"field_id":)" +
                               std::to_string(f_age) + R"(,"value":20},{"field_id":)" +
-                              std::to_string(f_hobby) + R"(,"value":"[\"篮球\"]"})") + R"(}})");
+                              std::to_string(f_hobby) + R"(,"value":"[\"篮球\"]"},{"field_id":)" +
+                              std::to_string(f_adjust) + R"(,"value":"是"},{"field_id":)" +
+                              std::to_string(f_bio) + R"(,"value":"hello wasm"})") + R"(}})");
     CHECK(rr["code"] == 0);
     // 保存不属于该活动的字段 → 422
     rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u1) +
@@ -658,14 +679,16 @@ int main() {
     rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
                   R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
     CHECK(rr["code"] == 422);
-    // u2：姓名长度不足 + 错误选项 + 年龄越界 + 非法邮箱 → 422
+    // u2：姓名长度不足 + 错误选项 + 年龄越界 + 非法邮箱 + 单选非法选项 + 多行文本过短 → 422
     rr = invoke(rdb, R"({"op":"registration.save","args":{"uid":)" + std::to_string(u2) +
                   R"(,"registration_id":)" + std::to_string(r2) + "," +
                   fields_json(R"({"field_id":)" + std::to_string(f_name) + R"(,"value":"x"},{"field_id":)" +
                               std::to_string(f_gender) + R"(,"value":"未知"},{"field_id":)" +
                               std::to_string(f_email) + R"(,"value":"abc"},{"field_id":)" +
                               std::to_string(f_age) + R"(,"value":17},{"field_id":)" +
-                              std::to_string(f_hobby) + R"(,"value":"[\"排球\"]"})") + R"(}})");
+                              std::to_string(f_hobby) + R"(,"value":"[\"排球\"]"},{"field_id":)" +
+                              std::to_string(f_adjust) + R"(,"value":"未知"},{"field_id":)" +
+                              std::to_string(f_bio) + R"(,"value":"ab"})") + R"(}})");
     CHECK(rr["code"] == 0);  // 保存不校验
     rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
                   R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
@@ -677,7 +700,9 @@ int main() {
                               std::to_string(f_gender) + R"(,"value":"男"},{"field_id":)" +
                               std::to_string(f_email) + R"(,"value":"b@c.com"},{"field_id":)" +
                               std::to_string(f_age) + R"(,"value":22},{"field_id":)" +
-                              std::to_string(f_hobby) + R"(,"value":"[\"足球\",\"羽毛球\"]"})") + R"(}})");
+                              std::to_string(f_hobby) + R"(,"value":"[\"足球\",\"羽毛球\"]"},{"field_id":)" +
+                              std::to_string(f_adjust) + R"(,"value":"是"},{"field_id":)" +
+                              std::to_string(f_bio) + R"(,"value":"hello wasm"})") + R"(}})");
     CHECK(rr["code"] == 0);
     rr = invoke(rdb, R"({"op":"registration.submit","args":{"uid":)" + std::to_string(u2) +
                   R"(,"registration_id":)" + std::to_string(r2) + R"(}})");
@@ -758,7 +783,7 @@ int main() {
     CHECK(rr["code"] == 0 && rr["data"]["total"] == 1);
     rr = invoke(rdb, R"({"op":"registration.admin_detail","args":{"uid":)" + std::to_string(admin_uid) +
                   R"(,"registration_id":)" + std::to_string(r1) + R"(}})");
-    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 5);
+    CHECK(rr["code"] == 0 && rr["data"]["items"].size() == 7);
     rr = invoke(rdb, R"({"op":"registration.admin_list","args":{"uid":)" + std::to_string(outsider) +
                   R"(,"activity_id":)" + std::to_string(act) + R"(}})");
     CHECK(rr["code"] == 403);
@@ -882,6 +907,7 @@ int main() {
       CHECK(edb.userVersion() == 4);
     }
     ensureLangAvatar(edb);
+    ensureCompetition(edb);
 
     // 用户与权限：root 超管 / admin_b 活动管理员(g2) / 报名者 e1 e2 / outsider
     auto ereg = [&](const char* u) -> std::int64_t {
@@ -1100,6 +1126,7 @@ int main() {
       CHECK(mdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
     ensureLangAvatar(mdb);
+    ensureCompetition(mdb);
 
     auto mreg = [&](const char* u) -> std::int64_t {
       json rr = invoke(mdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +
@@ -1319,6 +1346,7 @@ int main() {
       CHECK(sdb.migrate(ss2.str(), 2) == SQLITE_OK);
     }
     ensureLangAvatar(sdb);
+    ensureCompetition(sdb);
 
     auto reg7 = [&](const char* u) -> std::int64_t {
       json rr = invoke(sdb, std::string(R"({"op":"auth.register","args":{"username":")") + u +

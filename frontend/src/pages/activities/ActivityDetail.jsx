@@ -127,6 +127,12 @@ export default function ActivityDetail() {
 
   const forms = [...(activity.forms || [])].sort((a, b) => a.sort_order - b.sort_order);
 
+  // 信息展示区：比赛地点（管理员在「活动配置」中配置 venue_name / venue_address）
+  const venue = [activity.configs?.venue_name, activity.configs?.venue_address]
+    .filter((v) => v && String(v).trim())
+    .map((v) => String(v).trim())
+    .join(' · ');
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
       <div>
@@ -142,7 +148,28 @@ export default function ActivityDetail() {
           column={1}
           size="small"
           items={[
-            { key: 'window', label: t('activity.window'), children: windowText(activity.start_time, activity.end_time) },
+            {
+              key: 'window',
+              label: t('activity.window'),
+              children: windowText(activity.start_time, activity.end_time),
+            },
+            {
+              key: 'deadline',
+              label: t('activity.deadline'),
+              children: activity.end_time ? formatTime(activity.end_time) : '—',
+            },
+            {
+              key: 'competition',
+              label: t('activity.competition_time'),
+              children: activity.competition_start
+                ? windowText(activity.competition_start, activity.competition_end)
+                : '—',
+            },
+            {
+              key: 'venue',
+              label: t('activity.venue'),
+              children: venue || '—',
+            },
             {
               key: 'slots',
               label: t('activity.slots'),

@@ -17,6 +17,9 @@ export const activities = {
 
   // 活动详情
   'activity.window': { zh: '报名时间', en: 'Registration window' },
+  'activity.deadline': { zh: '报名截止', en: 'Registration deadline' },
+  'activity.competition_time': { zh: '比赛时间', en: 'Competition time' },
+  'activity.venue': { zh: '比赛地点', en: 'Venue' },
   'activity.slots': { zh: '名额', en: 'Slots' },
   'activity.review': { zh: '审核', en: 'Review' },
   'activity.review_required': { zh: '报名后需管理员审核', en: 'Requires admin approval' },

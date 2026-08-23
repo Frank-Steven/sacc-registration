@@ -185,7 +185,7 @@ nlohmann::json form_template_apply(Db& db, const nlohmann::json& args) {
   for (const auto& f : fields) {
     const std::string field_key = f.value("field_key", "");
     const std::int64_t field_type = f.value("field_type", 0);
-    if (field_key.empty() || field_type < 0 || field_type > 5) continue;  // 跳过非法项
+    if (field_key.empty() || field_type < 0 || field_type > 7) continue;  // 跳过非法项
     if (db.execParams(
             "INSERT INTO form_field (form_id, field_key, field_label, field_type, is_required, "
             "options, default_value, placeholder, validation, is_visible, is_editable, "

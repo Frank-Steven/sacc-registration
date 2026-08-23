@@ -47,7 +47,7 @@ test('migrations: 空库初始化为最新版本并建全部表', async () => {
     const runtime = await WasmRuntime.load(WASM_PATH, tmp);
     const dbPath = path.join(tmp, 'sacc_test.db');
     const version = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(version, 8);
+    assert.equal(version, 9);
 
     const tables = await runtime.invoke({ op: 'db.tables' });
     assert.equal(tables.code, 0);
@@ -69,8 +69,8 @@ test('migrations: 重复执行幂等（版本已是最新则跳过）', async ()
     const dbPath = path.join(tmp, 'sacc_test.db');
     const v1 = await runMigrations(runtime, { root: ROOT, dbPath });
     const v2 = await runMigrations(runtime, { root: ROOT, dbPath });
-    assert.equal(v1, 8);
-    assert.equal(v2, 8);
+    assert.equal(v1, 9);
+    assert.equal(v2, 9);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

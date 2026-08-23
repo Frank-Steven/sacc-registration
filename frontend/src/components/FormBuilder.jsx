@@ -1,10 +1,19 @@
-import { Checkbox, DatePicker, Form, Input, InputNumber, Select } from 'antd';
+import { Checkbox, DatePicker, Form, Input, InputNumber, Radio, Select } from 'antd';
 import { t, useI18n } from '../utils/i18n/index.js';
 
-// options 支持数组或「换行 / 逗号」分隔的字符串
+// options 支持数组 / JSON 数组字符串（表单设计器保存格式）/「换行或逗号」分隔的字符串
 function parseOptions(options) {
   if (Array.isArray(options)) return options.filter((o) => o !== '' && o != null);
   if (typeof options === 'string') {
+    const s = options.trim();
+    if (s.startsWith('[')) {
+      try {
+        const arr = JSON.parse(s);
+        if (Array.isArray(arr)) return arr.filter((o) => o !== '' && o != null);
+      } catch {
+        // 非 JSON 数组 → 回退分隔符拆分
+      }
+    }
     return options
       .split(/[\n,，]/)
       .map((s) => s.trim())
@@ -13,13 +22,28 @@ function parseOptions(options) {
   return [];
 }
 
+// validation 支持对象 / JSON 字符串（后端契约）；解析失败回退 {}
+function parseValidation(validation) {
+  if (validation && typeof validation === 'object') return validation;
+  if (typeof validation === 'string' && validation.trim()) {
+    try {
+      const obj = JSON.parse(validation);
+      if (obj && typeof obj === 'object') return obj;
+    } catch {
+      /* 非法 JSON 忽略 */
+    }
+  }
+  return {};
+}
+
 // 依据 field.validation JSON（{min,max,min_length,max_length,regex,min_items,max_items}）生成 antd rules
 function buildRules(field) {
   const rules = [];
   if (field.is_required) rules.push({ required: true, message: t('form.required_field', { label: field.field_label }) });
-  const v = field.validation || {};
+  const v = parseValidation(field.validation);
   switch (field.field_type) {
     case 0: // 文本
+    case 7: // 多行文本：长度与正则规则一致
       if (v.min_length) rules.push({ min: v.min_length, message: t('form.min_length', { label: field.field_label, n: v.min_length }) });
       if (v.max_length) rules.push({ max: v.max_length, message: t('form.max_length', { label: field.field_label, n: v.max_length }) });
       if (v.regex) {
@@ -46,17 +70,20 @@ function buildRules(field) {
 
 function renderControl(field, disabled) {
   const d = disabled || field.is_editable === false;
+  const v = parseValidation(field.validation);
   switch (field.field_type) {
     case 0:
-      return <Input placeholder={field.placeholder} disabled={d} maxLength={field.validation?.max_length || undefined} />;
+      return <Input placeholder={field.placeholder} disabled={d} maxLength={v.max_length || undefined} />;
+    case 7:
+      return <Input.TextArea rows={4} placeholder={field.placeholder} disabled={d} maxLength={v.max_length || undefined} />;
     case 1:
       return (
         <InputNumber
           style={{ width: '100%' }}
           placeholder={field.placeholder}
           disabled={d}
-          min={field.validation?.min}
-          max={field.validation?.max}
+          min={v.min}
+          max={v.max}
         />
       );
     case 2:
@@ -66,6 +93,10 @@ function renderControl(field, disabled) {
           disabled={d}
           options={parseOptions(field.options).map((o) => ({ label: o, value: o }))}
         />
+      );
+    case 6:
+      return (
+        <Radio.Group disabled={d} options={parseOptions(field.options).map((o) => ({ label: o, value: o }))} />
       );
     case 3:
       return <Checkbox.Group disabled={d} options={parseOptions(field.options)} />;

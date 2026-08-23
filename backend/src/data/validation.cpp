@@ -331,7 +331,7 @@ std::string validate_submit_fields(Db& db, std::int64_t activity_id, const nlohm
     } else if (type == 4) {  // 日期
       if (!is_date_str(v.is_string() ? v.get_ref<const std::string&>() : ""))
         return "「" + label + "」须为 YYYY-MM-DD 日期";
-    } else if (type == 2) {  // 单选
+    } else if (type == 2 || type == 6) {  // 单选（2 下拉选择 / 6 单选框）
       if (!option_allowed(f.value("options", ""), v, false)) return "「" + label + "」选项不合法";
     } else if (type == 3) {  // 多选
       if (!option_allowed(f.value("options", ""), v, true)) return "「" + label + "」选项不合法";
@@ -350,7 +350,7 @@ std::string validate_submit_fields(Db& db, std::int64_t activity_id, const nlohm
         if (rule.contains("max_items") && count > rule["max_items"].get<int>())
           return "「" + label + "」最多选择 " + std::to_string(rule["max_items"].get<int>()) + " 项";
       }
-    } else if (type == 0) {  // 文本：长度与正则
+    } else if (type == 0 || type == 7) {  // 文本 / 多行文本：长度与正则
       const std::string s = v.is_string() ? v.get_ref<const std::string&>() : "";
       nlohmann::json rule;
       const std::string vs = f.value("validation", "");

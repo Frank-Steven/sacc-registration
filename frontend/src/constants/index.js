@@ -24,14 +24,16 @@ export const ActivityStatus = Object.freeze({
   3: { text: '已结束', color: 'default' },
 });
 
-// 表单字段类型：0 文本 / 1 数字 / 2 单选 / 3 多选 / 4 日期 / 5 文件
+// 表单字段类型：0 文本 / 1 数字 / 2 下拉选择 / 3 多选 / 4 日期 / 5 文件 / 6 单选 / 7 多行文本
 export const FieldType = Object.freeze({
   0: { text: '文本', color: 'default' },
   1: { text: '数字', color: 'cyan' },
-  2: { text: '单选', color: 'blue' },
+  2: { text: '下拉选择', color: 'blue' },
   3: { text: '多选', color: 'purple' },
   4: { text: '日期', color: 'green' },
   5: { text: '文件', color: 'orange' },
+  6: { text: '单选', color: 'blue' },
+  7: { text: '多行文本', color: 'default' },
 });
 
 // 通知类型：0 报名成功 / 1 审核结果 / 2 活动提醒 / 3 候补
