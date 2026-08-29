@@ -22,7 +22,8 @@
     "frontend:build": "cd frontend && yarn build",
     "build": "yarn backend:build && yarn backend:wasm && yarn frontend:build",
     "test": "bash scripts/test.sh",
-    "dev": "bash scripts/dev.sh"
+    "dev": "bash scripts/dev.sh",
+    "bootstrap": "node scripts/bootstrap-admin.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
