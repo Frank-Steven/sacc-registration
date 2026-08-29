@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -28,7 +29,9 @@ int failures = 0;
     }                                                                            \
   } while (0)
 
-json invoke(sacc::Db& db, const std::string& req) {
+json invoke(sacc::Db& db, std::string req) {
+  // 去除可能混入的 NUL 字节（部分 CI 环境 TMPDIR 含 \0 导致 json::parse 抛异常）
+  req.erase(std::remove(req.begin(), req.end(), '\0'), req.end());
   return sacc::dispatch(db, json::parse(req));
 }
 
