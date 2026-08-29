@@ -1,5 +1,7 @@
 # 宿主层类型检查（JSDoc + checkJs）维护指南
 
+> [返回总入口](README.md)
+
 宿主（`host/`）为 **Node + ESM**，业务逻辑全部在 C++/WASM 内，宿主仅承担 JWT 校验、路由与 wasm 透传，约 1130 行薄胶水层。基于此**不引入 TypeScript 编译链**（`-fno-exceptions` 的 wasm 边界是"字符串化 JSON"，TS 编译期类型无法替代运行时防御，迁移收益低于成本），而是启用 **JSDoc + `checkJs`**：零构建成本、VSCode 即时报错、可随时收紧。
 
 ## 1. 配置与命令

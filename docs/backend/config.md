@@ -160,7 +160,7 @@ WHERE ag.activity_id = ? AND ag.group_id IS NOT NULL LIMIT 1;
 | GET | `/api/activities/:id` | 活动详情 + 分组 + 表单字段定义（供报名渲染） |
 | GET | `/api/groups/tree` | `group.public_tree`（M5 B3 新增：报名端公开分组树，供活动大厅筛选） |
 
-> **宿主路由扩展**：现有 [server.js](../index.md) 路由为正则匹配，M2 起支持字符串路径 + `:param` 捕获注入 `ctx.params`（已实现）。
+> **宿主路由扩展**：现有 [server.js](../../host/src/http/server.js) 路由为正则匹配，M2 起支持字符串路径 + `:param` 捕获注入 `ctx.params`（已实现）。
 
 ## 三、业务规则
 
